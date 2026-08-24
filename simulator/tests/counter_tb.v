@@ -19,7 +19,7 @@ module counter_tb;
 
     initial begin
         // Create waveform
-        $dumpfile("counter.vcd");
+        $dumpfile("work/counter.vcd");
         $dumpvars(0, counter_tb);
 
         // Initial conditions
