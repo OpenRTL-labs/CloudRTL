@@ -1,0 +1,10 @@
+read_verilog examples/counter.v
+
+hierarchy -top counter
+
+proc
+opt
+
+write_verilog -noattr work/counter_netlist.v
+
+stat

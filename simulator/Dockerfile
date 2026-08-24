@@ -7,6 +7,7 @@ RUN apt-get update && \
         iverilog \
         verilator \
         gtkwave \
+        yosys \
         make \
         git \
         python3 \
