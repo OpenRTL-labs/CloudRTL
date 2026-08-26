@@ -30,3 +30,7 @@ Thumbs.db
 *_netlist.v
 simulation_results/
 waveforms/
+
+#PDK data 
+physical/pdk/
+physical/work/
