@@ -1,10 +1,18 @@
-read_verilog examples/counter.v
+read_verilog /CloudRTL/git/simulator/examples/counter.v
 
-hierarchy -top counter
-
+hierarchy -check -top counter
 proc
 opt
 
-write_verilog -noattr work/counter_netlist.v
+read_liberty -lib /OpenROAD-flow-scripts/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
 
-stat
+techmap
+opt
+
+dfflibmap -liberty /OpenROAD-flow-scripts/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
+
+abc -liberty /OpenROAD-flow-scripts/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
+
+clean
+
+write_verilog -noattr -noexpr /CloudRTL/git/simulator/work/counter_netlist.v
