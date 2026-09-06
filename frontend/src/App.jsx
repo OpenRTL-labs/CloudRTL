@@ -8,6 +8,89 @@ const navItems = [
   { id: 'physical-design', label: 'Physical Design' },
 ]
 
+function ProjectsView() {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-white">
+          Projects
+        </h1>
+        <p className="mt-2 text-sm text-slate-400">
+          Manage your RTL and EDA workspaces.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+              RTL Design Project
+            </p>
+            <h2 className="mt-2 text-xl font-semibold text-white">
+              counter
+            </h2>
+          </div>
+
+          <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
+            Ready
+          </span>
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <p className="text-xs text-slate-500">Technology</p>
+            <p className="mt-1 text-sm font-medium text-slate-200">
+              Nangate45
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <p className="text-xs text-slate-500">Top Module</p>
+            <p className="mt-1 text-sm font-medium text-slate-200">
+              counter
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <p className="text-xs text-slate-500">Workspace</p>
+            <p className="mt-1 text-sm font-medium text-slate-200">
+              RTL + EDA
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className="mt-6 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-400 transition-colors hover:bg-cyan-500/20"
+        >
+          Open Project
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/30 p-6">
+        <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+          New Workspace
+        </p>
+
+        <h2 className="mt-2 text-lg font-semibold text-slate-200">
+          Create New Project
+        </h2>
+
+        <p className="mt-1 text-sm text-slate-400">
+          Start a new RTL and EDA workspace.
+        </p>
+
+        <button
+          type="button"
+          className="mt-5 rounded-md border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-700 hover:text-white"
+        >
+          Create Project
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [backendStatus, setBackendStatus] = useState('checking')
@@ -122,66 +205,71 @@ export default function App() {
         {/* Main Workspace Area */}
         <main className="flex-1 overflow-y-auto bg-slate-950 p-8">
           <div className="mx-auto max-w-5xl space-y-6">
-            {/* Welcome Section */}
-            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-8 shadow-sm">
-              <div className="max-w-2xl space-y-3">
-                <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-                  Welcome to CloudRTL
-                </h1>
-                <p className="text-slate-400 leading-relaxed text-sm">
-                  A cloud-native Electronic Design Automation (EDA) workspace for
-                  RTL design, verification, logic synthesis, and physical layout.
-                </p>
-              </div>
-
-              {/* Workspace Placeholder Cards */}
-              <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-5">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
-                    Simulation
+            {activeTab === 'projects' ? (
+              <ProjectsView />
+            ) : (
+              <>
+                {/* Welcome Section */}
+                <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-8 shadow-sm">
+                  <div className="max-w-2xl space-y-3">
+                    <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+                      Welcome to CloudRTL
+                    </h1>
+                    <p className="text-slate-400 leading-relaxed text-sm">
+                      A cloud-native Electronic Design Automation (EDA) workspace for
+                      RTL design, verification, logic synthesis, and physical layout.
+                    </p>
                   </div>
-                  <h3 className="mt-2 font-medium text-slate-200">
-                    RTL Simulation & Waveforms
-                  </h3>
-                  <p className="mt-1 text-xs text-slate-400 leading-normal">
-                    Run Verilog and SystemVerilog testbenches in the cloud.
-                  </p>
-                </div>
 
-                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-5">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                    Synthesis
+                  {/* Workspace Placeholder Cards */}
+                  <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-5">
+                      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+                        Simulation
+                      </div>
+                      <h3 className="mt-2 font-medium text-slate-200">
+                        RTL Simulation & Waveforms
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-400 leading-normal">
+                        Run Verilog and SystemVerilog testbenches in the cloud.
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-5">
+                      <div className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
+                        Synthesis
+                      </div>
+                      <h3 className="mt-2 font-medium text-slate-200">
+                        Logic Synthesis
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-400 leading-normal">
+                        Translate RTL to optimized gate-level netlists.
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-5">
+                      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-400">
+                        Physical Design
+                      </div>
+                      <h3 className="mt-2 font-medium text-slate-200">
+                        ASIC Implementation
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-400 leading-normal">
+                        Place and route flow with standard cell technology.
+                      </p>
+                    </div>
                   </div>
-                  <h3 className="mt-2 font-medium text-slate-200">
-                    Logic Synthesis
-                  </h3>
-                  <p className="mt-1 text-xs text-slate-400 leading-normal">
-                    Translate RTL to optimized gate-level netlists.
-                  </p>
                 </div>
-
-                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-5">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-indigo-400">
-                    Physical Design
-                  </div>
-                  <h3 className="mt-2 font-medium text-slate-200">
-                    ASIC Implementation
-                  </h3>
-                  <p className="mt-1 text-xs text-slate-400 leading-normal">
-                    Place and route flow with standard cell technology.
-                  </p>
+                {/* Active Section Placeholder */}
+                <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-6 text-center text-sm text-slate-400">
+                  Active view:{' '}
+                  <span className="font-semibold text-slate-200">
+                    {navItems.find((n) => n.id === activeTab)?.label}
+                  </span>{' '}
+                  — workspace modules will be mounted here.
                 </div>
-              </div>
-            </div>
-
-            {/* Active Section Placeholder */}
-            <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-6 text-center text-sm text-slate-400">
-              Active view:{' '}
-              <span className="font-semibold text-slate-200">
-                {navItems.find((n) => n.id === activeTab)?.label}
-              </span>{' '}
-              — workspace modules will be mounted here.
-            </div>
+              </>
+            )}
           </div>
         </main>
       </div>
