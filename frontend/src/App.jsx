@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -10,6 +10,23 @@ const navItems = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
+  const [backendStatus, setBackendStatus] = useState('checking')
+
+  useEffect(() => {
+    fetch('/health')
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Backend unavailable')
+        }
+        return response.json()
+      })
+      .then((data) => {
+        setBackendStatus(data.status === 'healthy' ? 'connected' : 'disconnected')
+      })
+      .catch(() => {
+        setBackendStatus('disconnected')
+      })
+  }, [])
 
   return (
     <div className="flex h-screen w-screen flex-col bg-slate-950 text-slate-100 antialiased font-sans select-none">
@@ -63,16 +80,14 @@ export default function App() {
                   key={item.id}
                   type="button"
                   onClick={() => setActiveTab(item.id)}
-                  className={`w-full flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
-                    isActive
-                      ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
-                      : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                  }`}
+                  className={`w-full flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${isActive
+                    ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
+                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                    }`}
                 >
                   <span
-                    className={`h-2 w-2 rounded-full ${
-                      isActive ? 'bg-cyan-400' : 'bg-slate-600'
-                    }`}
+                    className={`h-2 w-2 rounded-full ${isActive ? 'bg-cyan-400' : 'bg-slate-600'
+                      }`}
                   />
                   {item.label}
                 </button>
@@ -83,6 +98,24 @@ export default function App() {
           <div className="rounded-md border border-slate-800/80 bg-slate-950/60 p-3 text-xs text-slate-400">
             <p className="font-medium text-slate-300">Environment</p>
             <p className="mt-1 text-slate-400">Workspace Ready</p>
+            <p className="mt-2">
+              Backend:{' '}
+              <span
+                className={
+                  backendStatus === 'connected'
+                    ? 'text-emerald-400'
+                    : backendStatus === 'disconnected'
+                      ? 'text-red-400'
+                      : 'text-yellow-400'
+                }
+              >
+                {backendStatus === 'connected'
+                  ? 'Connected'
+                  : backendStatus === 'disconnected'
+                    ? 'Disconnected'
+                    : 'Checking...'}
+              </span>
+            </p>
           </div>
         </aside>
 
