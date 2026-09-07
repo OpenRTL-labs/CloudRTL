@@ -10,6 +10,8 @@ const navItems = [
 function ProjectWorkspace({ project, onBack }) {
   const [files, setFiles] = useState([])
   const [filesStatus, setFilesStatus] = useState('loading')
+  const [simStatus, setSimStatus] = useState('idle')
+  const [simOutput, setSimOutput] = useState('')
 
   useEffect(() => {
     let isMounted = true
@@ -39,6 +41,45 @@ function ProjectWorkspace({ project, onBack }) {
       isMounted = false
     }
   }, [project.name])
+
+  const handleRunSimulation = () => {
+    if (simStatus === 'running') return
+    setSimStatus('running')
+    setSimOutput('')
+
+    fetch(`/projects/${project.name}/simulate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+      .then((res) => {
+        if (!res.ok) {
+          return res.json().then(
+            (err) => {
+              throw new Error(err.detail || `Simulation request failed (${res.status})`)
+            },
+            () => {
+              throw new Error(`Simulation request failed (${res.status})`)
+            }
+          )
+        }
+        return res.json()
+      })
+      .then((data) => {
+        if (data.status === 'success') {
+          setSimStatus('success')
+          setSimOutput(data.output || 'Simulation passed with no output.')
+        } else {
+          setSimStatus('failed')
+          setSimOutput(data.output || 'Simulation failed.')
+        }
+      })
+      .catch((err) => {
+        setSimStatus('failed')
+        setSimOutput(err.message || 'Simulation execution failed.')
+      })
+  }
 
   return (
     <div className="space-y-6">
@@ -162,6 +203,70 @@ function ProjectWorkspace({ project, onBack }) {
                 </div>
               ))
             )}
+          </div>
+        )}
+      </div>
+
+      {/* Simulation Section */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+              Simulation
+            </p>
+            <h2 className="mt-1 text-lg font-semibold text-white">
+              RTL Simulation (Icarus Verilog)
+            </h2>
+            <p className="mt-1 text-sm text-slate-400">
+              Compile and run testbench through Docker execution.
+            </p>
+          </div>
+
+          <div>
+            <button
+              type="button"
+              onClick={handleRunSimulation}
+              disabled={simStatus === 'running'}
+              className="rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {simStatus === 'running' ? 'Running Simulation...' : 'Run Simulation'}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center gap-2 text-sm">
+          <span className="font-medium text-slate-400">Status:</span>
+          {simStatus === 'idle' && (
+            <span className="font-medium text-slate-300">Ready</span>
+          )}
+          {simStatus === 'running' && (
+            <span className="flex items-center gap-2 font-medium text-yellow-400">
+              <span className="h-2 w-2 rounded-full bg-yellow-400 animate-pulse" />
+              Running...
+            </span>
+          )}
+          {simStatus === 'success' && (
+            <span className="flex items-center gap-2 font-medium text-emerald-400">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              Simulation Passed
+            </span>
+          )}
+          {simStatus === 'failed' && (
+            <span className="flex items-center gap-2 font-medium text-red-400">
+              <span className="h-2 w-2 rounded-full bg-red-400" />
+              Simulation Failed
+            </span>
+          )}
+        </div>
+
+        {simOutput && (
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              Simulation Output
+            </p>
+            <pre className="mt-2 max-h-80 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-xs text-slate-300 whitespace-pre-wrap">
+              {simOutput}
+            </pre>
           </div>
         )}
       </div>
@@ -423,6 +528,7 @@ export default function App() {
           <div className="mx-auto max-w-5xl space-y-6">
             {activeProject ? (
               <ProjectWorkspace
+                key={activeProject.name}
                 project={activeProject}
                 onBack={() => setActiveProject(null)}
               />
