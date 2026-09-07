@@ -8,6 +8,38 @@ const navItems = [
   { id: 'physical-design', label: 'Physical Design' },
 ]
 function ProjectWorkspace({ project, onBack }) {
+  const [files, setFiles] = useState([])
+  const [filesStatus, setFilesStatus] = useState('loading')
+
+  useEffect(() => {
+    let isMounted = true
+
+    fetch(`/projects/${project.name}/files`)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Failed to fetch project files')
+        }
+        return response.json()
+      })
+      .then((data) => {
+        if (!isMounted) return
+        if (data.detail) {
+          throw new Error(data.detail)
+        }
+        setFiles(data.files || [])
+        setFilesStatus('loaded')
+      })
+      .catch(() => {
+        if (isMounted) {
+          setFilesStatus('error')
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [project.name])
+
   return (
     <div className="space-y-6">
       <div>
@@ -67,6 +99,71 @@ function ProjectWorkspace({ project, onBack }) {
             </p>
           </div>
         </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+              Project Files
+            </p>
+            <h2 className="mt-1 text-lg font-semibold text-white">
+              Source &amp; Testbench
+            </h2>
+          </div>
+          {filesStatus === 'loaded' && (
+            <span className="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-300">
+              {files.length} {files.length === 1 ? 'file' : 'files'}
+            </span>
+          )}
+        </div>
+
+        {filesStatus === 'loading' && (
+          <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400">
+            Loading project files...
+          </div>
+        )}
+
+        {filesStatus === 'error' && (
+          <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+            Unable to load project files from backend.
+          </div>
+        )}
+
+        {filesStatus === 'loaded' && (
+          <div className="mt-4 space-y-3">
+            {files.length === 0 ? (
+              <p className="text-sm text-slate-400">No files found for this project.</p>
+            ) : (
+              files.map((file) => (
+                <div
+                  key={file.name}
+                  className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-sm font-medium text-slate-200">
+                      {file.name}
+                    </span>
+                  </div>
+
+                  <span
+                    className={`rounded border px-2.5 py-1 text-xs font-medium uppercase tracking-wider ${
+                      file.type === 'rtl'
+                        ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
+                        : 'border-indigo-500/30 bg-indigo-500/10 text-indigo-400'
+                    }`}
+                  >
+                    {file.type === 'rtl'
+                      ? 'RTL'
+                      : file.type === 'testbench'
+                        ? 'Testbench'
+                        : file.type}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/30 p-6">

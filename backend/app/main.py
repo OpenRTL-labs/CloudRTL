@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 
@@ -16,6 +16,10 @@ class Project(BaseModel):
     top_module: str
     status: str
 
+class ProjectFile(BaseModel):
+    name: str
+    type: str
+
 projects = [
     Project(
         name="counter",
@@ -25,6 +29,13 @@ projects = [
         status="ready",
     )
 ]
+
+project_files = {
+    "counter": [
+        ProjectFile(name="counter.v", type="rtl"),
+        ProjectFile(name="counter_tb.v", type="testbench"),
+    ]
+}
 
 @app.get("/")
 def root():
@@ -50,3 +61,14 @@ def get_project(project_name: str):
             return project
 
     return {"detail": "Project not found"}
+
+@app.get("/projects/{project_name}/files")
+def get_project_files(project_name: str):
+    for project in projects:
+        if project.name == project_name:
+            return {
+                "project": project.name,
+                "files": project_files.get(project.name, []),
+            }
+
+    raise HTTPException(status_code=404, detail="Project not found")
