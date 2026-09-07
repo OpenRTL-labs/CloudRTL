@@ -42,3 +42,11 @@ def health_check():
 @app.get("/projects")
 def get_projects():
     return {"projects": projects}
+
+@app.get("/projects/{project_name}")
+def get_project(project_name: str):
+    for project in projects:
+        if project.name == project_name:
+            return project
+
+    return {"detail": "Project not found"}
