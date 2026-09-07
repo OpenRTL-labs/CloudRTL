@@ -11,6 +11,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/health': 'http://localhost:8000',
+      '/projects': 'http://localhost:8000',
     },
   },
 })
