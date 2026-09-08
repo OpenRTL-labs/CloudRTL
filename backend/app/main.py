@@ -7,6 +7,91 @@ from pydantic import BaseModel
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SIMULATOR_DIR = REPO_ROOT / "simulator"
 
+# ============== VCD WAVEFORM PARSER ==============
+
+def parse_vcd(vcd_path: Path):
+    signals = []
+    signal_map = {}
+    current_scope = []
+    current_time = 0
+
+    with vcd_path.open("r", encoding="utf-8", errors="replace") as vcd_file:
+        for raw_line in vcd_file:
+            line = raw_line.strip()
+
+            if not line:
+                continue
+
+            if line.startswith("$scope"):
+                parts = line.split()
+                if len(parts) >= 3:
+                    current_scope.append(parts[2])
+                continue
+
+            if line.startswith("$upscope"):
+                if current_scope:
+                    current_scope.pop()
+                continue
+
+            if line.startswith("$var"):
+                parts = line.split()
+                if len(parts) >= 5:
+                    width = int(parts[2])
+                    identifier = parts[3]
+                    name = parts[4]
+
+                    full_name = ".".join(current_scope + [name])
+
+                    signal = {
+                        "name": full_name,
+                        "width": width,
+                        "changes": [],
+                    }
+
+                    signals.append(signal)
+                    signal_map[identifier] = signal
+                continue
+
+            if line.startswith("#"):
+                try:
+                    current_time = int(line[1:])
+                except ValueError:
+                    continue
+                continue
+
+            # Scalar value change: 0!, 1!, x!, z!, etc.
+            if len(line) >= 2 and line[0] in "01xXzZ":
+                identifier = line[1:]
+                signal = signal_map.get(identifier)
+
+                if signal is not None:
+                    signal["changes"].append(
+                        {
+                            "time": current_time,
+                            "value": line[0],
+                        }
+                    )
+                continue
+
+            # Vector value change: b1010 !
+            if line.startswith("b") or line.startswith("B"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    value = parts[0][1:]
+                    identifier = parts[1]
+                    signal = signal_map.get(identifier)
+
+                    if signal is not None:
+                        signal["changes"].append(
+                            {
+                                "time": current_time,
+                                "value": value,
+                            }
+                        )
+
+    return signals
+
+
 app = FastAPI(
     title="CloudRTL",
     description="Cloud-Based RTL Simulation Platform",
@@ -54,6 +139,7 @@ project_files = {
         ProjectFile(name="counter_tb.v", type="testbench"),
     ]
 }
+
 
 @app.get("/")
 def root():
@@ -288,4 +374,38 @@ def get_project_artifact(project_name: str, artifact_name: str):
         media_type="application/octet-stream",
     )
 
-
+# ============== WAVEFORM API ==============
+
+@app.get("/projects/{project_name}/waveform")
+def get_project_waveform(project_name: str):
+    matched_project = next(
+        (p for p in projects if p.name == project_name),
+        None,
+    )
+
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    work_dir = (SIMULATOR_DIR / "work").resolve()
+    vcd_path = work_dir / f"{matched_project.name}.vcd"
+
+    if not vcd_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Waveform artifact not found. Run a successful simulation first.",
+        )
+
+    try:
+        signals = parse_vcd(vcd_path)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to parse VCD waveform: {str(exc)}",
+        )
+
+    return {
+        "project": matched_project.name,
+        "waveform": {
+            "signals": signals,
+        },
+    }

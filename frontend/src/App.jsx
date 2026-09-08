@@ -7,15 +7,141 @@ const navItems = [
   { id: 'synthesis', label: 'Synthesis' },
   { id: 'physical-design', label: 'Physical Design' },
 ]
+// ==================== WAVEFORM VIEWER ====================
+function WaveformDisplay({ waveform }) {
+  const signals = waveform.signals || []
+
+  const maxTime = Math.max(
+    1,
+    ...signals.flatMap((signal) =>
+      (signal.changes || []).map((change) => change.time)
+    )
+  )
+
+  const waveformWidth = 700
+  const rowHeight = 56
+  const labelWidth = 120
+  const totalHeight = Math.max(80, signals.length * rowHeight)
+
+  const getX = (time) => (time / maxTime) * waveformWidth
+
+  return (
+    <div className="mt-4 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950">
+      <div className="min-w-[900px] p-4">
+        <div className="mb-3 flex items-center text-xs text-slate-500">
+          <div
+            className="flex-shrink-0"
+            style={{ width: `${labelWidth}px` }}
+          >
+            Signal
+          </div>
+
+          <div className="relative h-6 flex-1">
+            <span className="absolute left-0">0</span>
+            <span
+              className="absolute"
+              style={{
+                left: '50%',
+                transform: 'translateX(-50%)',
+              }}
+            >
+              {Math.round(maxTime / 2)}
+            </span>
+            <span className="absolute right-0">{maxTime}</span>
+          </div>
+        </div>
+
+        <div
+          className="relative"
+          style={{ height: `${totalHeight}px` }}
+        >
+          {signals.map((signal, signalIndex) => {
+            const changes = signal.changes || []
+
+            return (
+              <div
+                key={signal.name}
+                className="absolute left-0 right-0 flex items-center border-t border-slate-800"
+                style={{
+                  top: `${signalIndex * rowHeight}px`,
+                  height: `${rowHeight}px`,
+                }}
+              >
+                <div
+                  className="flex-shrink-0 truncate pr-3 font-mono text-xs font-medium text-slate-300"
+                  style={{ width: `${labelWidth}px` }}
+                  title={signal.name}
+                >
+                  {signal.name}
+                </div>
+
+                <svg
+                  viewBox={`0 0 ${waveformWidth} 40`}
+                  preserveAspectRatio="none"
+                  className="h-10 flex-1"
+                >
+                  {changes.length > 0 &&
+                    changes.map((change, index) => {
+                      const nextChange = changes[index + 1]
+                      const startX = getX(change.time)
+                      const endX = nextChange
+                        ? getX(nextChange.time)
+                        : waveformWidth
+
+                      const isHigh = change.value === '1'
+
+                      const y = isHigh ? 8 : 28
+
+                      return (
+                        <g key={`${signal.name}-${change.time}-${index}`}>
+                          <line
+                            x1={startX}
+                            y1={y}
+                            x2={endX}
+                            y2={y}
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          />
+
+                          {nextChange && (
+                            <line
+                              x1={endX}
+                              y1={y}
+                              x2={endX}
+                              y2={nextChange.value === '1' ? 8 : 28}
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            />
+                          )}
+                        </g>
+                      )
+                    })}
+                </svg>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
 function ProjectWorkspace({ project, onBack }) {
+  // ==================== PROJECT FILES ====================
   const [files, setFiles] = useState([])
   const [filesStatus, setFilesStatus] = useState('loading')
+  // ==================== SIMULATION ====================
   const [simStatus, setSimStatus] = useState('idle')
   const [simOutput, setSimOutput] = useState('')
+  // ==================== ARTIFACTS ====================
   const [artifacts, setArtifacts] = useState([])
   const [artifactsStatus, setArtifactsStatus] = useState('idle')
   const [artifactsError, setArtifactsError] = useState('')
+  // ==================== WAVEFORM ====================
+  const [waveform, setWaveform] = useState(null)
+  const [waveformStatus, setWaveformStatus] = useState('idle')
+  const [waveformError, setWaveformError] = useState('')
 
+  // ==================== PROJECT FILES ====================
   useEffect(() => {
     let isMounted = true
 
@@ -45,6 +171,7 @@ function ProjectWorkspace({ project, onBack }) {
     }
   }, [project.name])
 
+  // ==================== ARTIFACT HANDLING ====================
   const fetchArtifacts = () => {
     setArtifactsStatus('loading')
     setArtifactsError('')
@@ -67,6 +194,32 @@ function ProjectWorkspace({ project, onBack }) {
       })
   }
 
+  // ==================== WAVEFORM DATA ====================
+
+  const fetchWaveform = () => {
+    setWaveformStatus('loading')
+    setWaveformError('')
+
+    fetch(`/projects/${project.name}/waveform`)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Failed to fetch waveform data')
+        }
+        return response.json()
+      })
+      .then((data) => {
+        setWaveform(data.waveform || null)
+        setWaveformStatus('loaded')
+      })
+      .catch((err) => {
+        setWaveform(null)
+        setWaveformStatus('error')
+        setWaveformError(err.message || 'Unable to load waveform data.')
+      })
+  }
+
+  // ==================== SIMULATION ====================
+
   const handleRunSimulation = () => {
     if (simStatus === 'running') return
     setSimStatus('running')
@@ -74,6 +227,9 @@ function ProjectWorkspace({ project, onBack }) {
     setArtifacts([])
     setArtifactsStatus('idle')
     setArtifactsError('')
+    setWaveform(null)
+    setWaveformStatus('idle')
+    setWaveformError('')
 
     fetch(`/projects/${project.name}/simulate`, {
       method: 'POST',
@@ -99,6 +255,7 @@ function ProjectWorkspace({ project, onBack }) {
           setSimStatus('success')
           setSimOutput(data.output || 'Simulation passed with no output.')
           fetchArtifacts()
+          fetchWaveform()
         } else {
           setSimStatus('failed')
           setSimOutput(data.output || 'Simulation failed.')
@@ -218,8 +375,8 @@ function ProjectWorkspace({ project, onBack }) {
 
                   <span
                     className={`rounded border px-2.5 py-1 text-xs font-medium uppercase tracking-wider ${file.type === 'rtl'
-                        ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
-                        : 'border-indigo-500/30 bg-indigo-500/10 text-indigo-400'
+                      ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
+                      : 'border-indigo-500/30 bg-indigo-500/10 text-indigo-400'
                       }`}
                   >
                     {file.type === 'rtl'
@@ -297,6 +454,7 @@ function ProjectWorkspace({ project, onBack }) {
             </pre>
           </div>
         )}
+        {/*Artifacts*/}
         <div className="mt-6 border-t border-slate-800 pt-6">
           <div className="flex items-center justify-between">
             <div>
@@ -306,6 +464,51 @@ function ProjectWorkspace({ project, onBack }) {
               <h3 className="mt-1 text-base font-semibold text-white">
                 Simulation Artifacts
               </h3>
+            </div>
+            {/*Waveform Viewer */}
+            <div className="mt-6 border-t border-slate-800 pt-6">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+                  Waveform Viewer
+                </p>
+                <h3 className="mt-1 text-base font-semibold text-white">
+                  Digital Signal Waveforms
+                </h3>
+              </div>
+
+              {waveformStatus === 'idle' && (
+                <p className="mt-4 text-sm text-slate-400">
+                  Run a successful simulation to view waveforms.
+                </p>
+              )}
+
+              {waveformStatus === 'loading' && (
+                <p className="mt-4 text-sm text-slate-400">
+                  Loading waveform data...
+                </p>
+              )}
+
+              {waveformStatus === 'error' && (
+                <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+                  {waveformError || 'Unable to load waveform data.'}
+                </div>
+              )}
+
+              {waveformStatus === 'loaded' &&
+                waveform &&
+                waveform.signals &&
+                waveform.signals.length === 0 && (
+                  <p className="mt-4 text-sm text-slate-400">
+                    No signals were found in the waveform.
+                  </p>
+                )}
+
+              {waveformStatus === 'loaded' &&
+                waveform &&
+                waveform.signals &&
+                waveform.signals.length > 0 && (
+                  <WaveformDisplay waveform={waveform} />
+                )}
             </div>
           </div>
           {simStatus === 'idle' && (
@@ -361,8 +564,8 @@ function ProjectWorkspace({ project, onBack }) {
                       </p>
                       <span
                         className={`mt-1 inline-block rounded border px-2 py-0.5 text-xs font-medium uppercase tracking-wider ${artifact.type === 'waveform'
-                            ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
-                            : 'border-slate-700 bg-slate-800 text-slate-400'
+                          ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
+                          : 'border-slate-700 bg-slate-800 text-slate-400'
                           }`}
                       >
                         {artifact.type === 'waveform'
