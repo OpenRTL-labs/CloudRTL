@@ -1,6 +1,7 @@
 import subprocess
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -28,6 +29,14 @@ class SimulationResponse(BaseModel):
     status: str
     return_code: int
     output: str
+
+class ArtifactItem(BaseModel):
+    name: str
+    type: str
+
+class ArtifactsResponse(BaseModel):
+    project: str
+    artifacts: list[ArtifactItem]
 
 projects = [
     Project(
@@ -207,6 +216,76 @@ def simulate_project(project_name: str):
         status="success",
         return_code=0,
         output=sim_output.strip() or "Simulation completed successfully.",
+    )
+
+
+@app.get("/projects/{project_name}/artifacts", response_model=ArtifactsResponse)
+def get_project_artifacts(project_name: str):
+    matched_project = next((p for p in projects if p.name == project_name), None)
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    work_dir = (SIMULATOR_DIR / "work").resolve()
+    artifacts: list[ArtifactItem] = []
+
+    if work_dir.is_dir():
+        prefix = f"{matched_project.name}"
+        for f in sorted(work_dir.iterdir()):
+            if f.is_file() and (f.name.startswith(f"{prefix}.") or f.name.startswith(f"{prefix}_")):
+                if f.suffix == ".vcd":
+                    artifact_type = "waveform"
+                elif f.suffix == ".vvp":
+                    artifact_type = "simulation"
+                elif f.suffix == ".v":
+                    artifact_type = "netlist"
+                else:
+                    artifact_type = "artifact"
+                artifacts.append(ArtifactItem(name=f.name, type=artifact_type))
+
+    artifacts.sort(key=lambda a: (0 if a.type == "waveform" else 1, a.name))
+
+    return ArtifactsResponse(
+        project=project_name,
+        artifacts=artifacts,
+    )
+
+
+@app.get("/projects/{project_name}/artifacts/{artifact_name}")
+def get_project_artifact(project_name: str, artifact_name: str):
+    matched_project = next((p for p in projects if p.name == project_name), None)
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Prevent path traversal and arbitrary filesystem access
+    if (
+        artifact_name != Path(artifact_name).name
+        or "/" in artifact_name
+        or "\\" in artifact_name
+        or ".." in artifact_name
+    ):
+        raise HTTPException(status_code=400, detail="Invalid artifact name: path traversal is not allowed")
+
+    # Only allow artifacts that belong to this project
+    prefix = f"{matched_project.name}"
+    if not (artifact_name.startswith(f"{prefix}.") or artifact_name.startswith(f"{prefix}_")):
+        raise HTTPException(status_code=404, detail="Artifact not found for this project")
+
+    work_dir = (SIMULATOR_DIR / "work").resolve()
+    target_path = (work_dir / artifact_name).resolve()
+
+    # Verify target path is strictly within work_dir
+    try:
+        target_path.relative_to(work_dir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid artifact path")
+
+    if not target_path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    return FileResponse(
+        path=target_path,
+        filename=artifact_name,
+        media_type="application/octet-stream",
     )
 
 

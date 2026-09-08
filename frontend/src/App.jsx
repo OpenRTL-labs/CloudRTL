@@ -12,6 +12,9 @@ function ProjectWorkspace({ project, onBack }) {
   const [filesStatus, setFilesStatus] = useState('loading')
   const [simStatus, setSimStatus] = useState('idle')
   const [simOutput, setSimOutput] = useState('')
+  const [artifacts, setArtifacts] = useState([])
+  const [artifactsStatus, setArtifactsStatus] = useState('idle')
+  const [artifactsError, setArtifactsError] = useState('')
 
   useEffect(() => {
     let isMounted = true
@@ -42,10 +45,35 @@ function ProjectWorkspace({ project, onBack }) {
     }
   }, [project.name])
 
+  const fetchArtifacts = () => {
+    setArtifactsStatus('loading')
+    setArtifactsError('')
+
+    fetch(`/projects/${project.name}/artifacts`)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Failed to fetch simulation artifacts')
+        }
+        return response.json()
+      })
+      .then((data) => {
+        setArtifacts(data.artifacts || [])
+        setArtifactsStatus('loaded')
+      })
+      .catch((err) => {
+        setArtifacts([])
+        setArtifactsStatus('error')
+        setArtifactsError(err.message || 'Unable to load simulation artifacts.')
+      })
+  }
+
   const handleRunSimulation = () => {
     if (simStatus === 'running') return
     setSimStatus('running')
     setSimOutput('')
+    setArtifacts([])
+    setArtifactsStatus('idle')
+    setArtifactsError('')
 
     fetch(`/projects/${project.name}/simulate`, {
       method: 'POST',
@@ -70,6 +98,7 @@ function ProjectWorkspace({ project, onBack }) {
         if (data.status === 'success') {
           setSimStatus('success')
           setSimOutput(data.output || 'Simulation passed with no output.')
+          fetchArtifacts()
         } else {
           setSimStatus('failed')
           setSimOutput(data.output || 'Simulation failed.')
@@ -188,11 +217,10 @@ function ProjectWorkspace({ project, onBack }) {
                   </div>
 
                   <span
-                    className={`rounded border px-2.5 py-1 text-xs font-medium uppercase tracking-wider ${
-                      file.type === 'rtl'
+                    className={`rounded border px-2.5 py-1 text-xs font-medium uppercase tracking-wider ${file.type === 'rtl'
                         ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
                         : 'border-indigo-500/30 bg-indigo-500/10 text-indigo-400'
-                    }`}
+                      }`}
                   >
                     {file.type === 'rtl'
                       ? 'RTL'
@@ -269,6 +297,96 @@ function ProjectWorkspace({ project, onBack }) {
             </pre>
           </div>
         )}
+        <div className="mt-6 border-t border-slate-800 pt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+                Artifacts
+              </p>
+              <h3 className="mt-1 text-base font-semibold text-white">
+                Simulation Artifacts
+              </h3>
+            </div>
+          </div>
+          {simStatus === 'idle' && (
+            <p className="mt-4 text-sm text-slate-400">
+              No simulation artifacts yet.
+            </p>
+          )}
+
+          {simStatus === 'running' && (
+            <p className="mt-4 text-sm text-slate-400">
+              Waiting for simulation to complete...
+            </p>
+          )}
+
+          {simStatus === 'failed' && (
+            <p className="mt-4 text-sm text-slate-400">
+              No artifacts available because the simulation failed.
+            </p>
+          )}
+
+          {simStatus === 'success' && artifactsStatus === 'loading' && (
+            <p className="mt-4 text-sm text-slate-400">
+              Loading simulation artifacts...
+            </p>
+          )}
+
+          {simStatus === 'success' && artifactsStatus === 'error' && (
+            <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+              {artifactsError || 'Unable to load simulation artifacts.'}
+            </div>
+          )}
+
+          {simStatus === 'success' &&
+            artifactsStatus === 'loaded' &&
+            artifacts.length === 0 && (
+              <p className="mt-4 text-sm text-slate-400">
+                No artifacts were generated.
+              </p>
+            )}
+
+          {simStatus === 'success' &&
+            artifactsStatus === 'loaded' &&
+            artifacts.length > 0 && (
+              <div className="mt-4 space-y-3">
+                {artifacts.map((artifact) => (
+                  <div
+                    key={artifact.name}
+                    className="flex items-center justify-between gap-4 rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3"
+                  >
+                    <div>
+                      <p className="font-mono text-sm font-medium text-slate-200">
+                        {artifact.name}
+                      </p>
+                      <span
+                        className={`mt-1 inline-block rounded border px-2 py-0.5 text-xs font-medium uppercase tracking-wider ${artifact.type === 'waveform'
+                            ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
+                            : 'border-slate-700 bg-slate-800 text-slate-400'
+                          }`}
+                      >
+                        {artifact.type === 'waveform'
+                          ? 'Waveform'
+                          : artifact.type}
+                      </span>
+                    </div>
+
+                    <a
+                      href={`/projects/${project.name}/artifacts/${encodeURIComponent(
+                        artifact.name
+                      )}`}
+                      download={artifact.name}
+                      className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-sm font-medium text-cyan-400 transition-colors hover:bg-cyan-500/20"
+                    >
+                      {artifact.type === 'waveform'
+                        ? 'Download VCD'
+                        : 'Download'}
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+        </div>
       </div>
 
       <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/30 p-6">
