@@ -132,6 +132,9 @@ function ProjectWorkspace({ project, onBack }) {
   // ==================== SIMULATION ====================
   const [simStatus, setSimStatus] = useState('idle')
   const [simOutput, setSimOutput] = useState('')
+  // ==================== SYNTHESIS STATE ====================
+  const [synthStatus, setSynthStatus] = useState('idle')
+  const [synthOutput, setSynthOutput] = useState('')
   // ==================== ARTIFACTS ====================
   const [artifacts, setArtifacts] = useState([])
   const [artifactsStatus, setArtifactsStatus] = useState('idle')
@@ -264,6 +267,42 @@ function ProjectWorkspace({ project, onBack }) {
       .catch((err) => {
         setSimStatus('failed')
         setSimOutput(err.message || 'Simulation execution failed.')
+      })
+  }
+
+  // ==================== SYNTHESIS WORKFLOW ====================
+  const handleRunSynthesis = () => {
+    setSynthStatus('running')
+    setSynthOutput('')
+
+    fetch(`/projects/${project.name}/synthesize`, {
+      method: 'POST',
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Synthesis request failed')
+        }
+        return response.json()
+      })
+      .then((data) => {
+        if (data.status === 'success') {
+          setSynthStatus('success')
+          setSynthOutput(
+            data.output || 'Synthesis completed successfully.'
+          )
+          fetchArtifacts()
+        } else {
+          setSynthStatus('failed')
+          setSynthOutput(
+            data.output || 'Synthesis failed.'
+          )
+        }
+      })
+      .catch((err) => {
+        setSynthStatus('failed')
+        setSynthOutput(
+          err.message || 'Unable to run synthesis.'
+        )
       })
   }
 
@@ -465,51 +504,6 @@ function ProjectWorkspace({ project, onBack }) {
                 Simulation Artifacts
               </h3>
             </div>
-            {/*Waveform Viewer */}
-            <div className="mt-6 border-t border-slate-800 pt-6">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
-                  Waveform Viewer
-                </p>
-                <h3 className="mt-1 text-base font-semibold text-white">
-                  Digital Signal Waveforms
-                </h3>
-              </div>
-
-              {waveformStatus === 'idle' && (
-                <p className="mt-4 text-sm text-slate-400">
-                  Run a successful simulation to view waveforms.
-                </p>
-              )}
-
-              {waveformStatus === 'loading' && (
-                <p className="mt-4 text-sm text-slate-400">
-                  Loading waveform data...
-                </p>
-              )}
-
-              {waveformStatus === 'error' && (
-                <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-                  {waveformError || 'Unable to load waveform data.'}
-                </div>
-              )}
-
-              {waveformStatus === 'loaded' &&
-                waveform &&
-                waveform.signals &&
-                waveform.signals.length === 0 && (
-                  <p className="mt-4 text-sm text-slate-400">
-                    No signals were found in the waveform.
-                  </p>
-                )}
-
-              {waveformStatus === 'loaded' &&
-                waveform &&
-                waveform.signals &&
-                waveform.signals.length > 0 && (
-                  <WaveformDisplay waveform={waveform} />
-                )}
-            </div>
           </div>
           {simStatus === 'idle' && (
             <p className="mt-4 text-sm text-slate-400">
@@ -589,7 +583,120 @@ function ProjectWorkspace({ project, onBack }) {
                 ))}
               </div>
             )}
+
         </div>
+        {/*Waveform Viewer */}
+        <div className="mt-6 border-t border-slate-800 pt-6">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+              Waveform Viewer
+            </p>
+            <h3 className="mt-1 text-base font-semibold text-white">
+              Digital Signal Waveforms
+            </h3>
+          </div>
+
+          {waveformStatus === 'idle' && (
+            <p className="mt-4 text-sm text-slate-400">
+              Run a successful simulation to view waveforms.
+            </p>
+          )}
+
+          {waveformStatus === 'loading' && (
+            <p className="mt-4 text-sm text-slate-400">
+              Loading waveform data...
+            </p>
+          )}
+
+          {waveformStatus === 'error' && (
+            <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+              {waveformError || 'Unable to load waveform data.'}
+            </div>
+          )}
+
+          {waveformStatus === 'loaded' &&
+            waveform &&
+            waveform.signals &&
+            waveform.signals.length === 0 && (
+              <p className="mt-4 text-sm text-slate-400">
+                No signals were found in the waveform.
+              </p>
+            )}
+
+          {waveformStatus === 'loaded' &&
+            waveform &&
+            waveform.signals &&
+            waveform.signals.length > 0 && (
+              <WaveformDisplay waveform={waveform} />
+            )}
+        </div>
+
+        {/* ==================== SYNTHESIS ==================== */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+                Synthesis
+              </p>
+              <h3 className="mt-1 text-base font-semibold text-white">
+                RTL Synthesis
+              </h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Convert the RTL design into a synthesized gate-level netlist.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleRunSynthesis}
+              disabled={synthStatus === 'running'}
+              className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-300 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {synthStatus === 'running'
+                ? 'Running Synthesis...'
+                : 'Run Synthesis'}
+            </button>
+          </div>
+
+          <div className="mt-5">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-slate-400">Status:</span>
+
+              <span
+                className={
+                  synthStatus === 'success'
+                    ? 'font-semibold text-emerald-400'
+                    : synthStatus === 'failed'
+                      ? 'font-semibold text-red-400'
+                      : synthStatus === 'running'
+                        ? 'font-semibold text-amber-400'
+                        : 'font-semibold text-slate-300'
+                }
+              >
+                {synthStatus === 'success'
+                  ? 'Synthesis Passed'
+                  : synthStatus === 'failed'
+                    ? 'Synthesis Failed'
+                    : synthStatus === 'running'
+                      ? 'Running'
+                      : 'Ready'}
+              </span>
+            </div>
+          </div>
+
+          {synthOutput && (
+            <div className="mt-5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Synthesis Output
+              </p>
+
+              <pre className="mt-2 max-h-96 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs leading-5 text-slate-300">
+                {synthOutput}
+              </pre>
+            </div>
+          )}
+        </div>
+
       </div>
 
       <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/30 p-6">

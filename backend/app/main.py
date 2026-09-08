@@ -304,6 +304,66 @@ def simulate_project(project_name: str):
         output=sim_output.strip() or "Simulation completed successfully.",
     )
 
+# ==================== SYNTHESIS WORKFLOW ====================
+
+@app.post("/projects/{project_name}/synthesize")
+def synthesize_project(project_name: str):
+    matched_project = next(
+        (p for p in projects if p.name == project_name),
+        None,
+    )
+
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                "C:/CloudRTL:/CloudRTL",
+                "-v",
+                "C:/CloudRTL/tools/OpenROAD-flow-scripts:/OpenROAD-flow-scripts",
+                "-w",
+                "/CloudRTL/git/simulator",
+                "cloudrtl-eda:0.2",
+                "yosys",
+                "-s",
+                "/CloudRTL/git/simulator/scripts/synthesize.ys",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=500,
+            detail="Synthesis timed out.",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start synthesis: {str(exc)}",
+        )
+
+    output = (result.stdout + "\n" + result.stderr).strip()
+
+    if result.returncode != 0:
+        return {
+            "project": project_name,
+            "status": "failed",
+            "return_code": result.returncode,
+            "output": output,
+        }
+
+    return {
+        "project": project_name,
+        "status": "success",
+        "return_code": result.returncode,
+        "output": output,
+    }
 
 @app.get("/projects/{project_name}/artifacts", response_model=ArtifactsResponse)
 def get_project_artifacts(project_name: str):
