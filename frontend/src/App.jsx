@@ -140,6 +140,7 @@ function ProjectWorkspace({ project, onBack }) {
   // ==================== PHYSICAL DESIGN STATE ====================
   const [physicalStatus, setPhysicalStatus] = useState('idle')
   const [physicalOutput, setPhysicalOutput] = useState('')
+  const [physicalMetrics, setPhysicalMetrics] = useState(null)
   const [physicalArtifacts, setPhysicalArtifacts] = useState([])
   const [physicalArtifactsStatus, setPhysicalArtifactsStatus] = useState('idle')
   // ==================== ARTIFACTS ====================
@@ -338,6 +339,7 @@ function ProjectWorkspace({ project, onBack }) {
 
     setPhysicalStatus('running')
     setPhysicalOutput('')
+    setPhysicalMetrics(null)
     setPhysicalArtifacts([])
     setPhysicalArtifactsStatus('idle')
 
@@ -369,6 +371,7 @@ function ProjectWorkspace({ project, onBack }) {
           setPhysicalOutput(
             data.output || 'Physical design completed successfully.'
           )
+          setPhysicalMetrics(data.metrics || null)
 
           setPhysicalArtifactsStatus('loaded')
           setPhysicalArtifacts(
@@ -914,6 +917,104 @@ function ProjectWorkspace({ project, onBack }) {
           </div>
         </div>
 
+        {/* Physical Design Metrics */}
+        {physicalStatus === 'success' && physicalMetrics && (
+          <div className="mt-6 border-t border-slate-800 pt-6">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+                Metrics
+              </p>
+
+              <h4 className="mt-1 text-base font-semibold text-white">
+                Physical Design Results
+              </h4>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+
+              {/* Area */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Area</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {physicalMetrics.area ?? 'N/A'} µm²
+                </p>
+              </div>
+
+              {/* Utilization */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Utilization</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {physicalMetrics.utilization ?? 'N/A'}%
+                </p>
+              </div>
+
+              {/* Total Wire Length */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Total Wire Length</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {physicalMetrics.wire_length ?? 'N/A'} µm
+                </p>
+              </div>
+
+              {/* Metal2 Wire Length */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Metal2 Wire Length</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {physicalMetrics.metal2_wire_length ?? 'N/A'} µm
+                </p>
+              </div>
+
+              {/* Metal3 Wire Length */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Metal3 Wire Length</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {physicalMetrics.metal3_wire_length ?? 'N/A'} µm
+                </p>
+              </div>
+
+              {/* Via Count */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Via Count</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {physicalMetrics.vias ?? 'N/A'}
+                </p>
+              </div>
+
+              {/* Setup WNS */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Setup WNS</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {physicalMetrics.setup_wns !== null &&
+                    physicalMetrics.setup_wns !== undefined
+                    ? `${physicalMetrics.setup_wns >= 0 ? '+' : ''}${physicalMetrics.setup_wns}`
+                    : 'N/A'}
+                </p>
+              </div>
+
+              {/* Hold WNS */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Hold WNS</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {physicalMetrics.hold_wns !== null &&
+                    physicalMetrics.hold_wns !== undefined
+                    ? `${physicalMetrics.hold_wns >= 0 ? '+' : ''}${physicalMetrics.hold_wns}`
+                    : 'N/A'}
+                </p>
+              </div>
+
+              {/* Total Negative Slack */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">TNS</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {physicalMetrics.tns ?? 'N/A'}
+                </p>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* Physical Design Output */}
         {physicalOutput && (
           <div className="mt-5">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">

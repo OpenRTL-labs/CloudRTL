@@ -1,3 +1,4 @@
+import re
 import subprocess
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
@@ -477,6 +478,107 @@ def synthesize_project(project_name: str):
         "artifacts": artifacts,
     }
 
+# =================== Physical Design Metrics Parsing ===========================
+
+def parse_physical_metrics(output: str) -> dict:
+    """
+    Extract structured physical-design metrics from OpenROAD output.
+
+    Values are parsed from the actual OpenROAD reports generated
+    by run_openroad.tcl. Missing values remain None.
+    """
+
+    metrics = {
+        "area": None,
+        "utilization": None,
+        "wire_length": None,
+        "metal2_wire_length": None,
+        "metal3_wire_length": None,
+        "vias": None,
+        "setup_wns": None,
+        "hold_wns": None,
+        "tns": None,
+    }
+
+    # --------- Design area and utilization ----------
+    area_matches = re.findall(
+        r"Design area\s+([\d.]+)\s+um\^2\s+([\d.]+)%\s+utilization",
+        output,
+        re.IGNORECASE,
+    )
+
+    if area_matches:
+        area, utilization = area_matches[-1]
+        metrics["area"] = float(area)
+        metrics["utilization"] = float(utilization)
+
+    # --------- Routed wire length by metal layer ----------
+    metal2_match = re.search(
+        r"metal2\s+([\d.]+)um\s+\d+%",
+        output,
+        re.IGNORECASE,
+    )
+
+    if metal2_match:
+        metrics["metal2_wire_length"] = float(metal2_match.group(1))
+
+    metal3_match = re.search(
+        r"metal3\s+([\d.]+)um\s+\d+%",
+        output,
+        re.IGNORECASE,
+    )
+
+    if metal3_match:
+        metrics["metal3_wire_length"] = float(metal3_match.group(1))
+
+    # --------- Total routed wire length ----------
+    wire_match = re.search(
+        r"Total wire length(?:\s+is|\s*[:=])\s*([\d.]+)\s*um",
+        output,
+        re.IGNORECASE,
+    )
+
+    if wire_match:
+        metrics["wire_length"] = float(wire_match.group(1))
+    elif (
+        metrics["metal2_wire_length"] is not None
+        and metrics["metal3_wire_length"] is not None
+    ):
+        metrics["wire_length"] = round(
+            metrics["metal2_wire_length"]
+            + metrics["metal3_wire_length"],
+            2,
+        )
+
+    # --------- Via count ----------
+    vias_match = re.search(
+        r"Total number of vias\s*[:=]?\s*(\d+)",
+        output,
+        re.IGNORECASE,
+    )
+
+    if vias_match:
+        metrics["vias"] = int(vias_match.group(1))
+
+    # --------- Timing summary ---------
+    timing_match = re.search(
+        r"worst slack max\s+([-+]?\d+(?:\.\d+)?)"
+        r".*?"
+        r"worst slack min\s+([-+]?\d+(?:\.\d+)?)"
+        r".*?"
+        r"tns max\s+([-+]?\d+(?:\.\d+)?)",
+        output,
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    if timing_match:
+        metrics["setup_wns"] = float(timing_match.group(1))
+        metrics["hold_wns"] = float(timing_match.group(2))
+        metrics["tns"] = float(timing_match.group(3))
+
+    return metrics
+
+
 # ============ PHYSICAL DESIGN API ============
 
 @app.post("/projects/{project_name}/physical-design")
@@ -567,6 +669,7 @@ def run_physical_design(project_name: str):
         return {
             "project": project_name,
             "status": "failed",
+            "metrics": {},
             "output": output,
             "artifacts": [],
         }
@@ -588,9 +691,13 @@ def run_physical_design(project_name: str):
         if artifact_path.is_file():
             artifacts.append(artifact_name)
 
+    # ========== Parse Physical Design Metrics ==========
+
+    metrics = parse_physical_metrics(output)
     return {
         "project": project_name,
         "status": "success",
+        "metrics": metrics,
         "output": output,
         "artifacts": artifacts,
     }
