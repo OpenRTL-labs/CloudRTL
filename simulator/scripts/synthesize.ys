@@ -1,18 +1,58 @@
+# ============================================================
+# CloudRTL RTL Synthesis
+# Technology: Nangate45
+# ============================================================
+
+# ------------------------------------------------------------
+# 1. Read RTL
+# ------------------------------------------------------------
+
 read_verilog /CloudRTL/git/simulator/examples/counter.v
 
+# ------------------------------------------------------------
+# 2. Elaborate design
+# ------------------------------------------------------------
+
 hierarchy -check -top counter
+
 proc
 opt
 
-read_liberty -lib /OpenROAD-flow-scripts/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
+# ------------------------------------------------------------
+# 3. Load standard-cell library
+# ------------------------------------------------------------
+
+read_liberty -lib\
+    /OpenROAD-flow-scripts/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
+
+# ------------------------------------------------------------
+# 4. Technology mapping
+# ------------------------------------------------------------
 
 techmap
 opt
 
-dfflibmap -liberty /OpenROAD-flow-scripts/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
+dfflibmap \
+    -liberty \
+    /OpenROAD-flow-scripts/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
 
-abc -liberty /OpenROAD-flow-scripts/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
+abc \
+    -liberty \
+    /OpenROAD-flow-scripts/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
 
 clean
 
-write_verilog -noattr -noexpr /CloudRTL/git/simulator/work/counter_netlist.v
+# ------------------------------------------------------------
+# 5. Generate area report
+# ------------------------------------------------------------
+
+stat -liberty \
+    /OpenROAD-flow-scripts/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
+
+# ------------------------------------------------------------
+# 6. Write synthesized netlist
+# ------------------------------------------------------------
+write_verilog \
+    -noattr \
+    -noexpr \
+    /CloudRTL/git/simulator/work/counter_netlist.v

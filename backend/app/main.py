@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SIMULATOR_DIR = REPO_ROOT / "simulator"
+PHYSICAL_DIR = REPO_ROOT / "physical"
 
 # ============== VCD WAVEFORM PARSER ==============
 
@@ -308,6 +309,7 @@ def simulate_project(project_name: str):
 
 @app.post("/projects/{project_name}/synthesize")
 def synthesize_project(project_name: str):
+
     matched_project = next(
         (p for p in projects if p.name == project_name),
         None,
@@ -315,6 +317,13 @@ def synthesize_project(project_name: str):
 
     if not matched_project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    work_dir = (SIMULATOR_DIR / "work").resolve()
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    # --------------------------------------------------------
+    # Step 1: Run Yosys synthesis
+    # --------------------------------------------------------
 
     try:
         result = subprocess.run(
@@ -348,26 +357,479 @@ def synthesize_project(project_name: str):
             detail=f"Failed to start synthesis: {str(exc)}",
         )
 
-    output = (result.stdout + "\n" + result.stderr).strip()
+    synthesis_output = (
+        (result.stdout or "") +
+        ("\n" + result.stderr if result.stderr else "")
+    ).strip()
 
     if result.returncode != 0:
         return {
             "project": project_name,
             "status": "failed",
             "return_code": result.returncode,
-            "output": output,
+            "output": synthesis_output,
+            "artifacts": [],
         }
+
+    # --------------------------------------------------------
+    # Step 2: Verify synthesized netlist
+    # --------------------------------------------------------
+
+    netlist_path = work_dir / f"{project_name}_netlist.v"
+
+    if not netlist_path.is_file():
+        return {
+            "project": project_name,
+            "status": "failed",
+            "return_code": 1,
+            "output": synthesis_output
+            + "\n\nSynthesis completed but netlist was not generated.",
+            "artifacts": [],
+        }
+
+    # --------------------------------------------------------
+    # Step 3: Generate SDC constraints
+    # --------------------------------------------------------
+
+    sdc_path = work_dir / f"{project_name}.sdc"
+
+    sdc_path.write_text(
+        "create_clock -name clk -period 10 [get_ports clk]\n",
+        encoding="utf-8",
+    )
+
+    # --------------------------------------------------------
+    # Step 4: Run post-synthesis timing and power analysis
+    # --------------------------------------------------------
+
+    analysis_command = [
+        "docker",
+        "exec",
+        "openroad-work",
+        "/CloudRTL/tools/OpenROAD-flow-scripts/tools/OpenROAD/build/bin/openroad",
+        "/CloudRTL/git/physical/scripts/analysis.tcl",
+    ]
+
+    try:
+        analysis_result = subprocess.run(
+            analysis_command,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "project": project_name,
+            "status": "failed",
+            "return_code": 1,
+            "output": synthesis_output
+            + "\n\nPost-synthesis analysis timed out.",
+            "artifacts": [],
+        }
+
+    analysis_output = (
+        (analysis_result.stdout or "") +
+        ("\n" + analysis_result.stderr if analysis_result.stderr else "")
+    ).strip()
+
+    combined_output = (
+        "========== YOSYS SYNTHESIS ==========\n"
+        + synthesis_output
+        + "\n\n"
+        "========== POST-SYNTHESIS ANALYSIS ==========\n"
+        + analysis_output
+    )
+
+    if analysis_result.returncode != 0:
+        return {
+            "project": project_name,
+            "status": "failed",
+            "return_code": analysis_result.returncode,
+            "output": combined_output,
+            "artifacts": [],
+        }
+
+    # --------------------------------------------------------
+    # Step 5: Collect synthesis artifacts
+    # --------------------------------------------------------
+
+    expected_artifacts = [
+        f"{project_name}_netlist.v",
+        f"{project_name}.sdc",
+        f"{project_name}_area.rpt",
+        f"{project_name}_timing.rpt",
+        f"{project_name}_power.rpt",
+    ]
+
+    artifacts = []
+
+    for artifact_name in expected_artifacts:
+        artifact_path = work_dir / artifact_name
+
+        if artifact_path.is_file():
+            artifacts.append(artifact_name)
 
     return {
         "project": project_name,
         "status": "success",
-        "return_code": result.returncode,
-        "output": output,
+        "return_code": 0,
+        "output": combined_output,
+        "artifacts": artifacts,
     }
+
+# ============ PHYSICAL DESIGN API ============
+
+@app.post("/projects/{project_name}/physical-design")
+def run_physical_design(project_name: str):
+
+    # Validate project
+    matched_project = next(
+        (p for p in projects if p.name == project_name),
+        None,
+    )
+
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Check synthesized netlist
+    netlist_path = (SIMULATOR_DIR / "work" / f"{project_name}_netlist.v").resolve()
+
+    if not netlist_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Synthesized netlist not found. Run synthesis first.",
+        )
+
+    # Check OpenROAD container status
+    try:
+        container_check = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", "openroad-work"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        if container_check.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail="OpenROAD container 'openroad-work' was not found.",
+            )
+
+        if container_check.stdout.strip() != "true":
+            start_result = subprocess.run(
+                ["docker", "start", "openroad-work"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if start_result.returncode != 0:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to start OpenROAD container: {start_result.stderr}",
+                )
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=500,
+            detail="Timed out while checking OpenROAD container.",
+        )
+
+    # Run OpenROAD physical-design flow
+    openroad_command = [
+        "docker",
+        "exec",
+        "openroad-work",
+        "/CloudRTL/tools/OpenROAD-flow-scripts/tools/OpenROAD/build/bin/openroad",
+        f"/CloudRTL/git/physical/scripts/run_openroad.tcl",
+    ]
+
+    try:
+        result = subprocess.run(
+            openroad_command,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=500,
+            detail="Physical design flow timed out after 300 seconds.",
+        )
+
+    output = result.stdout
+
+    if result.stderr:
+        output += "\n" + result.stderr
+
+    if result.returncode != 0:
+        return {
+            "project": project_name,
+            "status": "failed",
+            "output": output,
+            "artifacts": [],
+        }
+
+    physical_work_dir = (PHYSICAL_DIR / "work").resolve()
+
+    artifacts = []
+
+    expected_artifacts = [
+        f"{project_name}_placed.def",
+        f"{project_name}_routed.def",
+        f"{project_name}.route.guide",
+        f"{project_name}_route_drc.rpt",
+    ]
+
+    for artifact_name in expected_artifacts:
+        artifact_path = physical_work_dir / artifact_name
+
+        if artifact_path.is_file():
+            artifacts.append(artifact_name)
+
+    return {
+        "project": project_name,
+        "status": "success",
+        "output": output,
+        "artifacts": artifacts,
+    }
+
+# ============ PHYSICAL ARTIFACTS API ============
+
+@app.get("/projects/{project_name}/physical-artifacts")
+def get_physical_artifacts(project_name: str):
+
+    matched_project = next(
+        (p for p in projects if p.name == project_name),
+        None,
+    )
+
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    work_dir = (PHYSICAL_DIR / "work").resolve()
+
+    if not work_dir.is_dir():
+        return {
+            "project": project_name,
+            "artifacts": [],
+        }
+
+    expected_artifacts = [
+        f"{project_name}_placed.def",
+        f"{project_name}_routed.def",
+        f"{project_name}.route.guide",
+        f"{project_name}_route_drc.rpt",
+    ]
+
+    artifacts = []
+
+    for artifact_name in expected_artifacts:
+        artifact_path = work_dir / artifact_name
+
+        if artifact_path.is_file():
+            artifacts.append(
+                {
+                    "name": artifact_name,
+                    "type": (
+                        "def"
+                        if artifact_name.endswith(".def")
+                        else "report"
+                        if artifact_name.endswith(".rpt")
+                        else "routing-guide"
+                    ),
+                }
+            )
+
+    return {
+        "project": project_name,
+        "artifacts": artifacts,
+    }
+
+@app.get("/projects/{project_name}/physical-artifacts/{artifact_name}")
+def get_physical_artifact(project_name: str, artifact_name: str):
+
+    matched_project = next(
+        (p for p in projects if p.name == project_name),
+        None,
+    )
+
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Prevent path traversal
+    if (
+        artifact_name != Path(artifact_name).name
+        or "/" in artifact_name
+        or "\\" in artifact_name
+        or ".." in artifact_name
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid artifact name: path traversal is not allowed",
+        )
+
+    # Only allow artifacts belonging to this project
+    prefix = f"{matched_project.name}"
+
+    if not (
+        artifact_name.startswith(f"{prefix}_")
+        or artifact_name.startswith(f"{prefix}.")
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Physical artifact not found",
+        )
+
+    work_dir = (PHYSICAL_DIR / "work").resolve()
+    target_path = (work_dir / artifact_name).resolve()
+
+    # Ensure target remains inside physical/work
+    try:
+        target_path.relative_to(work_dir)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid physical artifact path",
+        )
+
+    if not target_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Physical artifact not found",
+        )
+
+    return FileResponse(
+        path=target_path,
+        filename=artifact_name,
+        media_type="application/octet-stream",
+    )
+
+# ============ SYNTHESIS ARTIFACTS API ============
+
+@app.get("/projects/{project_name}/synthesis-artifacts")
+def get_synthesis_artifacts(project_name: str):
+
+    matched_project = next(
+        (p for p in projects if p.name == project_name),
+        None,
+    )
+
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    work_dir = (SIMULATOR_DIR / "work").resolve()
+
+    if not work_dir.is_dir():
+        return {
+            "project": project_name,
+            "artifacts": [],
+        }
+
+    expected_artifacts = [
+        f"{project_name}_netlist.v",
+        f"{project_name}.sdc",
+        f"{project_name}_area.rpt",
+        f"{project_name}_timing.rpt",
+        f"{project_name}_power.rpt",
+    ]
+
+    artifacts = []
+
+    for artifact_name in expected_artifacts:
+        artifact_path = work_dir / artifact_name
+
+        if artifact_path.is_file():
+            if artifact_name.endswith(".v"):
+                artifact_type = "netlist"
+            elif artifact_name.endswith(".sdc"):
+                artifact_type = "constraints"
+            else:
+                artifact_type = "report"
+
+            artifacts.append(
+                {
+                    "name": artifact_name,
+                    "type": artifact_type,
+                }
+            )
+
+    return {
+        "project": project_name,
+        "artifacts": artifacts,
+    }
+
+
+@app.get("/projects/{project_name}/synthesis-artifacts/{artifact_name}")
+def get_synthesis_artifact(project_name: str, artifact_name: str):
+
+    matched_project = next(
+        (p for p in projects if p.name == project_name),
+        None,
+    )
+
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Prevent path traversal
+    if (
+        artifact_name != Path(artifact_name).name
+        or "/" in artifact_name
+        or "\\" in artifact_name
+        or ".." in artifact_name
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid artifact name: path traversal is not allowed",
+        )
+
+    expected_artifacts = {
+        f"{project_name}_netlist.v",
+        f"{project_name}.sdc",
+        f"{project_name}_area.rpt",
+        f"{project_name}_timing.rpt",
+        f"{project_name}_power.rpt",
+    }
+
+    if artifact_name not in expected_artifacts:
+        raise HTTPException(
+            status_code=404,
+            detail="Synthesis artifact not found",
+        )
+
+    work_dir = (SIMULATOR_DIR / "work").resolve()
+    target_path = (work_dir / artifact_name).resolve()
+
+    # Ensure target remains inside simulator/work
+    try:
+        target_path.relative_to(work_dir)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid synthesis artifact path",
+        )
+
+    if not target_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Synthesis artifact not found",
+        )
+
+    return FileResponse(
+        path=target_path,
+        filename=artifact_name,
+        media_type="application/octet-stream",
+    )
 
 @app.get("/projects/{project_name}/artifacts", response_model=ArtifactsResponse)
 def get_project_artifacts(project_name: str):
-    matched_project = next((p for p in projects if p.name == project_name), None)
+
+    matched_project = next(
+        (p for p in projects if p.name == project_name),
+        None,
+    )
+
     if not matched_project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -375,20 +837,40 @@ def get_project_artifacts(project_name: str):
     artifacts: list[ArtifactItem] = []
 
     if work_dir.is_dir():
-        prefix = f"{matched_project.name}"
-        for f in sorted(work_dir.iterdir()):
-            if f.is_file() and (f.name.startswith(f"{prefix}.") or f.name.startswith(f"{prefix}_")):
-                if f.suffix == ".vcd":
-                    artifact_type = "waveform"
-                elif f.suffix == ".vvp":
-                    artifact_type = "simulation"
-                elif f.suffix == ".v":
-                    artifact_type = "netlist"
-                else:
-                    artifact_type = "artifact"
-                artifacts.append(ArtifactItem(name=f.name, type=artifact_type))
+        prefix = matched_project.name
 
-    artifacts.sort(key=lambda a: (0 if a.type == "waveform" else 1, a.name))
+        for f in sorted(work_dir.iterdir()):
+            if not f.is_file():
+                continue
+
+            if not (
+                f.name.startswith(f"{prefix}.")
+                or f.name.startswith(f"{prefix}_")
+            ):
+                continue
+
+            if f.suffix == ".vcd":
+                artifacts.append(
+                    ArtifactItem(
+                        name=f.name,
+                        type="waveform",
+                    )
+                )
+
+            elif f.suffix == ".vvp":
+                artifacts.append(
+                    ArtifactItem(
+                        name=f.name,
+                        type="simulation",
+                    )
+                )
+
+    artifacts.sort(
+        key=lambda a: (
+            0 if a.type == "waveform" else 1,
+            a.name,
+        )
+    )
 
     return ArtifactsResponse(
         project=project_name,

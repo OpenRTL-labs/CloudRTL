@@ -135,6 +135,13 @@ function ProjectWorkspace({ project, onBack }) {
   // ==================== SYNTHESIS STATE ====================
   const [synthStatus, setSynthStatus] = useState('idle')
   const [synthOutput, setSynthOutput] = useState('')
+  const [synthArtifacts, setSynthArtifacts] = useState([])
+  const [synthArtifactsStatus, setSynthArtifactsStatus] = useState('idle')
+  // ==================== PHYSICAL DESIGN STATE ====================
+  const [physicalStatus, setPhysicalStatus] = useState('idle')
+  const [physicalOutput, setPhysicalOutput] = useState('')
+  const [physicalArtifacts, setPhysicalArtifacts] = useState([])
+  const [physicalArtifactsStatus, setPhysicalArtifactsStatus] = useState('idle')
   // ==================== ARTIFACTS ====================
   const [artifacts, setArtifacts] = useState([])
   const [artifactsStatus, setArtifactsStatus] = useState('idle')
@@ -274,6 +281,8 @@ function ProjectWorkspace({ project, onBack }) {
   const handleRunSynthesis = () => {
     setSynthStatus('running')
     setSynthOutput('')
+    setSynthArtifacts([])
+    setSynthArtifactsStatus('loading')
 
     fetch(`/projects/${project.name}/synthesize`, {
       method: 'POST',
@@ -290,7 +299,24 @@ function ProjectWorkspace({ project, onBack }) {
           setSynthOutput(
             data.output || 'Synthesis completed successfully.'
           )
-          fetchArtifacts()
+          fetch(`/projects/${project.name}/synthesis-artifacts`)
+            .then((response) => {
+              if (!response.ok) {
+                throw new Error(
+                  `Failed to load synthesis artifacts (${response.status})`
+                )
+              }
+
+              return response.json()
+            })
+            .then((artifactData) => {
+              setSynthArtifacts(artifactData.artifacts || [])
+              setSynthArtifactsStatus('loaded')
+            })
+            .catch(() => {
+              setSynthArtifacts([])
+              setSynthArtifactsStatus('error')
+            })
         } else {
           setSynthStatus('failed')
           setSynthOutput(
@@ -302,6 +328,70 @@ function ProjectWorkspace({ project, onBack }) {
         setSynthStatus('failed')
         setSynthOutput(
           err.message || 'Unable to run synthesis.'
+        )
+      })
+  }
+
+  // ==================== PHYSICAL DESIGN WORKFLOW ====================
+  const handleRunPhysicalDesign = () => {
+    if (physicalStatus === 'running') return
+
+    setPhysicalStatus('running')
+    setPhysicalOutput('')
+    setPhysicalArtifacts([])
+    setPhysicalArtifactsStatus('idle')
+
+    fetch(`/projects/${project.name}/physical-design`, {
+      method: 'POST',
+    })
+      .then((response) => {
+        if (!response.ok) {
+          return response.json().then(
+            (err) => {
+              throw new Error(
+                err.detail ||
+                `Physical design request failed (${response.status})`
+              )
+            },
+            () => {
+              throw new Error(
+                `Physical design request failed (${response.status})`
+              )
+            }
+          )
+        }
+
+        return response.json()
+      })
+      .then((data) => {
+        if (data.status === 'success') {
+          setPhysicalStatus('success')
+          setPhysicalOutput(
+            data.output || 'Physical design completed successfully.'
+          )
+
+          setPhysicalArtifactsStatus('loaded')
+          setPhysicalArtifacts(
+            (data.artifacts || []).map((name) => ({
+              name,
+              type: name.endsWith('.def')
+                ? 'def'
+                : name.endsWith('.rpt')
+                  ? 'report'
+                  : 'routing-guide',
+            }))
+          )
+        } else {
+          setPhysicalStatus('failed')
+          setPhysicalOutput(
+            data.output || 'Physical design failed.'
+          )
+        }
+      })
+      .catch((err) => {
+        setPhysicalStatus('failed')
+        setPhysicalOutput(
+          err.message || 'Unable to run physical design.'
         )
       })
   }
@@ -631,72 +721,283 @@ function ProjectWorkspace({ project, onBack }) {
             )}
         </div>
 
-        {/* ==================== SYNTHESIS ==================== */}
-        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
-                Synthesis
-              </p>
-              <h3 className="mt-1 text-base font-semibold text-white">
-                RTL Synthesis
-              </h3>
-              <p className="mt-1 text-sm text-slate-400">
-                Convert the RTL design into a synthesized gate-level netlist.
-              </p>
-            </div>
 
-            <button
-              type="button"
-              onClick={handleRunSynthesis}
-              disabled={synthStatus === 'running'}
-              className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-300 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {synthStatus === 'running'
-                ? 'Running Synthesis...'
-                : 'Run Synthesis'}
-            </button>
+      </div>
+      {/* ==================== SYNTHESIS ==================== */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+              Synthesis
+            </p>
+            <h3 className="mt-1 text-base font-semibold text-white">
+              RTL Synthesis
+            </h3>
+            <p className="mt-1 text-sm text-slate-400">
+              Convert the RTL design into a synthesized gate-level netlist.
+            </p>
           </div>
 
-          <div className="mt-5">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-slate-400">Status:</span>
-
-              <span
-                className={
-                  synthStatus === 'success'
-                    ? 'font-semibold text-emerald-400'
-                    : synthStatus === 'failed'
-                      ? 'font-semibold text-red-400'
-                      : synthStatus === 'running'
-                        ? 'font-semibold text-amber-400'
-                        : 'font-semibold text-slate-300'
-                }
-              >
-                {synthStatus === 'success'
-                  ? 'Synthesis Passed'
-                  : synthStatus === 'failed'
-                    ? 'Synthesis Failed'
-                    : synthStatus === 'running'
-                      ? 'Running'
-                      : 'Ready'}
-              </span>
-            </div>
-          </div>
-
-          {synthOutput && (
-            <div className="mt-5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Synthesis Output
-              </p>
-
-              <pre className="mt-2 max-h-96 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs leading-5 text-slate-300">
-                {synthOutput}
-              </pre>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={handleRunSynthesis}
+            disabled={synthStatus === 'running'}
+            className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-300 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {synthStatus === 'running'
+              ? 'Running Synthesis...'
+              : 'Run Synthesis'}
+          </button>
         </div>
 
+        <div className="mt-5">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-slate-400">Status:</span>
+
+            <span
+              className={
+                synthStatus === 'success'
+                  ? 'font-semibold text-emerald-400'
+                  : synthStatus === 'failed'
+                    ? 'font-semibold text-red-400'
+                    : synthStatus === 'running'
+                      ? 'font-semibold text-amber-400'
+                      : 'font-semibold text-slate-300'
+              }
+            >
+              {synthStatus === 'success'
+                ? 'Synthesis Passed'
+                : synthStatus === 'failed'
+                  ? 'Synthesis Failed'
+                  : synthStatus === 'running'
+                    ? 'Running'
+                    : 'Ready'}
+            </span>
+          </div>
+        </div>
+
+        {synthOutput && (
+          <div className="mt-5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+              Synthesis Output
+            </p>
+
+            <pre className="mt-2 max-h-96 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs leading-5 text-slate-300">
+              {synthOutput}
+            </pre>
+          </div>
+        )}
+        {/* Synthesis Artifacts */}
+        <div className="mt-6 border-t border-slate-800 pt-6">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+              Artifacts
+            </p>
+            <h4 className="mt-1 text-base font-semibold text-white">
+              Synthesis Artifacts
+            </h4>
+          </div>
+
+          {synthStatus === 'idle' && (
+            <p className="mt-4 text-sm text-slate-400">
+              Run synthesis to generate synthesis artifacts.
+            </p>
+          )}
+
+          {synthStatus === 'running' && (
+            <p className="mt-4 text-sm text-slate-400">
+              Generating synthesis artifacts...
+            </p>
+          )}
+
+          {synthStatus === 'success' &&
+            synthArtifactsStatus === 'loaded' &&
+            synthArtifacts.length === 0 && (
+              <p className="mt-4 text-sm text-slate-400">
+                No synthesis artifacts were generated.
+              </p>
+            )}
+
+          {synthStatus === 'success' &&
+            synthArtifactsStatus === 'loaded' &&
+            synthArtifacts.length > 0 && (
+              <div className="mt-4 space-y-3">
+                {synthArtifacts.map((artifact) => (
+                  <div
+                    key={artifact.name}
+                    className="flex items-center justify-between gap-4 rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3"
+                  >
+                    <div>
+                      <p className="font-mono text-sm font-medium text-slate-200">
+                        {artifact.name}
+                      </p>
+                      <span className="mt-1 inline-block rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-slate-400">
+                        {artifact.type}
+                      </span>
+                    </div>
+
+                    <a
+                      href={`/projects/${project.name}/synthesis-artifacts/${encodeURIComponent(
+                        artifact.name
+                      )}`}
+                      download={artifact.name}
+                      className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-sm font-medium text-cyan-400 transition-colors hover:bg-cyan-500/20"
+                    >
+                      Download
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+
+          {synthStatus === 'success' &&
+            synthArtifactsStatus === 'error' && (
+              <p className="mt-4 text-sm text-red-400">
+                Synthesis completed, but the artifact list could not be loaded.
+              </p>
+            )}
+        </div>
+      </div>
+      {/* ==================== PHYSICAL DESIGN ==================== */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+              Physical Design
+            </p>
+
+            <h3 className="mt-1 text-base font-semibold text-white">
+              ASIC Physical Implementation
+            </h3>
+
+            <p className="mt-1 text-sm text-slate-400">
+              Run floorplanning, placement, routing, and post-route timing
+              analysis using OpenROAD.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleRunPhysicalDesign}
+            disabled={physicalStatus === 'running'}
+            className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-300 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {physicalStatus === 'running'
+              ? 'Running Physical Design...'
+              : 'Run Physical Design'}
+          </button>
+        </div>
+
+        <div className="mt-5">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-slate-400">Status:</span>
+
+            <span
+              className={
+                physicalStatus === 'success'
+                  ? 'font-semibold text-emerald-400'
+                  : physicalStatus === 'failed'
+                    ? 'font-semibold text-red-400'
+                    : physicalStatus === 'running'
+                      ? 'font-semibold text-amber-400'
+                      : 'font-semibold text-slate-300'
+              }
+            >
+              {physicalStatus === 'success'
+                ? 'Physical Design Passed'
+                : physicalStatus === 'failed'
+                  ? 'Physical Design Failed'
+                  : physicalStatus === 'running'
+                    ? 'Running'
+                    : 'Ready'}
+            </span>
+          </div>
+        </div>
+
+        {physicalOutput && (
+          <div className="mt-5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+              Physical Design Output
+            </p>
+
+            <pre className="mt-2 max-h-96 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs leading-5 text-slate-300 whitespace-pre-wrap">
+              {physicalOutput}
+            </pre>
+          </div>
+        )}
+
+        {/* Physical Design Artifacts */}
+        <div className="mt-6 border-t border-slate-800 pt-6">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+              Artifacts
+            </p>
+
+            <h4 className="mt-1 text-base font-semibold text-white">
+              Physical Design Artifacts
+            </h4>
+          </div>
+
+          {physicalStatus === 'idle' && (
+            <p className="mt-4 text-sm text-slate-400">
+              Run physical design to generate implementation artifacts.
+            </p>
+          )}
+
+          {physicalStatus === 'running' && (
+            <p className="mt-4 text-sm text-slate-400">
+              Waiting for OpenROAD to complete...
+            </p>
+          )}
+
+          {physicalStatus === 'failed' && (
+            <p className="mt-4 text-sm text-slate-400">
+              No physical design artifacts are available because the flow
+              failed.
+            </p>
+          )}
+
+          {physicalStatus === 'success' &&
+            physicalArtifactsStatus === 'loaded' &&
+            physicalArtifacts.length === 0 && (
+              <p className="mt-4 text-sm text-slate-400">
+                No physical design artifacts were generated.
+              </p>
+            )}
+
+          {physicalStatus === 'success' &&
+            physicalArtifactsStatus === 'loaded' &&
+            physicalArtifacts.length > 0 && (
+              <div className="mt-4 space-y-3">
+                {physicalArtifacts.map((artifact) => (
+                  <div
+                    key={artifact.name}
+                    className="flex items-center justify-between gap-4 rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3"
+                  >
+                    <div>
+                      <p className="font-mono text-sm font-medium text-slate-200">
+                        {artifact.name}
+                      </p>
+
+                      <span className="mt-1 inline-block rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-slate-400">
+                        {artifact.type}
+                      </span>
+                    </div>
+
+                    <a
+                      href={`/projects/${project.name}/physical-artifacts/${encodeURIComponent(
+                        artifact.name
+                      )}`}
+                      download={artifact.name}
+                      className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-sm font-medium text-cyan-400 transition-colors hover:bg-cyan-500/20"
+                    >
+                      Download
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+        </div>
       </div>
 
       <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/30 p-6">
