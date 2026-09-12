@@ -135,6 +135,7 @@ function ProjectWorkspace({ project, onBack }) {
   // ==================== SYNTHESIS STATE ====================
   const [synthStatus, setSynthStatus] = useState('idle')
   const [synthOutput, setSynthOutput] = useState('')
+  const [synthMetrics, setSynthMetrics] = useState(null)
   const [synthArtifacts, setSynthArtifacts] = useState([])
   const [synthArtifactsStatus, setSynthArtifactsStatus] = useState('idle')
   // ==================== PHYSICAL DESIGN STATE ====================
@@ -282,6 +283,7 @@ function ProjectWorkspace({ project, onBack }) {
   const handleRunSynthesis = () => {
     setSynthStatus('running')
     setSynthOutput('')
+    setSynthMetrics(null)
     setSynthArtifacts([])
     setSynthArtifactsStatus('loading')
 
@@ -300,6 +302,8 @@ function ProjectWorkspace({ project, onBack }) {
           setSynthOutput(
             data.output || 'Synthesis completed successfully.'
           )
+          setSynthMetrics(data.metrics || null)
+
           fetch(`/projects/${project.name}/synthesis-artifacts`)
             .then((response) => {
               if (!response.ok) {
@@ -524,7 +528,7 @@ function ProjectWorkspace({ project, onBack }) {
         )}
       </div>
 
-      {/* Simulation Section */}
+      {/* ============== SIMULATION ============== */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -790,6 +794,72 @@ function ProjectWorkspace({ project, onBack }) {
             </pre>
           </div>
         )}
+
+        {/* Synthesis Metrics */}
+        {synthStatus === 'success' && synthMetrics && (
+          <div className="mt-6 border-t border-slate-800 pt-6">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+                Metrics
+              </p>
+
+              <h4 className="mt-1 text-base font-semibold text-white">
+                Synthesis Results
+              </h4>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+
+              {/* Cell Count */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Cell Count</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {synthMetrics.cell_count ?? 'N/A'}
+                </p>
+              </div>
+
+              {/* Area */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Area</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {synthMetrics.area ?? 'N/A'} µm²
+                </p>
+              </div>
+
+              {/* Setup WNS */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Setup WNS</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {synthMetrics.setup_wns !== null &&
+                    synthMetrics.setup_wns !== undefined
+                    ? `${synthMetrics.setup_wns >= 0 ? '+' : ''}${synthMetrics.setup_wns}`
+                    : 'N/A'}
+                </p>
+              </div>
+
+              {/* Hold WNS */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">Hold WNS</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {synthMetrics.hold_wns !== null &&
+                    synthMetrics.hold_wns !== undefined
+                    ? `${synthMetrics.hold_wns >= 0 ? '+' : ''}${synthMetrics.hold_wns}`
+                    : 'N/A'}
+                </p>
+              </div>
+
+              {/* TNS */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs text-slate-500">TNS</p>
+                <p className="mt-1 text-lg font-semibold text-slate-200">
+                  {synthMetrics.tns ?? 'N/A'}
+                </p>
+              </div>
+
+            </div>
+          </div>
+        )}
+
         {/* Synthesis Artifacts */}
         <div className="mt-6 border-t border-slate-800 pt-6">
           <div>

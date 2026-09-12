@@ -306,6 +306,102 @@ def simulate_project(project_name: str):
         output=sim_output.strip() or "Simulation completed successfully.",
     )
 
+# ============== Synthesis Metrics Parsing ==============
+
+def parse_synthesis_metrics(project_name: str, output: str) -> dict:
+    metrics = {
+        "cell_count": None,
+        "area": None,
+        "setup_wns": None,
+        "hold_wns": None,
+        "tns": None,
+    }
+
+    # --------- Cell count ----------
+    cell_match = re.search(
+        r"Number of cells:\s*(\d+)",
+        output,
+        re.IGNORECASE,
+    )
+
+    if cell_match:
+        metrics["cell_count"] = int(cell_match.group(1))
+
+    work_dir = (SIMULATOR_DIR / "work").resolve()
+
+    # --------- Area ----------
+    area_report = work_dir / f"{project_name}_area.rpt"
+
+    if area_report.is_file():
+        area_text = area_report.read_text(
+            encoding="utf-8",
+            errors="replace",
+        )
+
+        area_match = re.search(
+            r"Chip area for module\s+'.*?':\s*([\d.]+)",
+            area_text,
+            re.IGNORECASE,
+        )
+
+        if area_match:
+            metrics["area"] = float(area_match.group(1))
+
+    # --------- Timing ----------
+    timing_report = work_dir / f"{project_name}_timing.rpt"
+
+    if timing_report.is_file():
+        timing_text = timing_report.read_text(
+            encoding="utf-8",
+            errors="replace",
+        )
+
+        # Setup WNS - extract slack from max-delay path
+        max_section = re.search(
+            r"Path Type:\s*max(.*?)(?=\nStartpoint:|\nwns max|\Z)",
+            timing_text,
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        if max_section:
+            setup_match = re.search(
+                r"([-+]?\d+(?:\.\d+)?)\s+slack\s+\(MET\)",
+                max_section.group(1),
+                re.IGNORECASE,
+            )
+
+            if setup_match:
+                metrics["setup_wns"] = float(setup_match.group(1))
+
+        # Hold WNS - extract slack from min-delay path
+        min_section = re.search(
+            r"Path Type:\s*min(.*?)(?=\nwns max|\Z)",
+            timing_text,
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        if min_section:
+            hold_match = re.search(
+                r"([-+]?\d+(?:\.\d+)?)\s+slack\s+\(MET\)",
+                min_section.group(1),
+                re.IGNORECASE,
+            )
+
+            if hold_match:
+                metrics["hold_wns"] = float(hold_match.group(1))
+
+        # TNS - setup/max-delay TNS
+        tns_match = re.search(
+            r"tns max\s+([-+]?\d+(?:\.\d+)?)",
+            timing_text,
+            re.IGNORECASE,
+        )
+
+        if tns_match:
+            metrics["tns"] = float(tns_match.group(1))
+
+    return metrics
+
 # ==================== SYNTHESIS WORKFLOW ====================
 
 @app.post("/projects/{project_name}/synthesize")
@@ -408,7 +504,7 @@ def synthesize_project(project_name: str):
         "exec",
         "openroad-work",
         "/CloudRTL/tools/OpenROAD-flow-scripts/tools/OpenROAD/build/bin/openroad",
-        "/CloudRTL/git/physical/scripts/analysis.tcl",
+        "/CloudRTL/git/simulator/scripts/analysis.tcl",
     ]
 
     try:
@@ -470,13 +566,21 @@ def synthesize_project(project_name: str):
         if artifact_path.is_file():
             artifacts.append(artifact_name)
 
+    # ========== Parse Synthesis Metrics ==========
+
+    metrics = parse_synthesis_metrics(
+        project_name,
+        combined_output,
+    )
+
     return {
         "project": project_name,
         "status": "success",
         "return_code": 0,
+        "metrics": metrics,
         "output": combined_output,
         "artifacts": artifacts,
-    }
+}
 
 # =================== Physical Design Metrics Parsing ===========================
 
