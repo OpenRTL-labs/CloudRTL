@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createProjectSession } from './hooks/useProjectSession'
 import SimulationSection from './components/simulation/SimulationSection'
 import SynthesisSection from './components/synthesis/SynthesisSection'
 import PhysicalDesignSection from './components/physical/PhysicalDesignSection'
@@ -139,6 +140,22 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [backendStatus, setBackendStatus] = useState('checking')
   const [activeProject, setActiveProject] = useState(null)
+  const [projectSessions, setProjectSessions] = useState({})
+
+  const handleOpenProject = (project) => {
+    setActiveProject(project)
+
+    setProjectSessions((previous) => {
+      if (previous[project.name]) {
+        return previous
+      }
+
+      return {
+        ...previous,
+        [project.name]: createProjectSession(),
+      }
+    })
+  }
 
   useEffect(() => {
     fetch('/health')
@@ -257,10 +274,20 @@ export default function App() {
               <ProjectWorkspace
                 key={activeProject.name}
                 project={activeProject}
+                session={projectSessions[activeProject.name]}
+                setSession={(updater) => {
+                  setProjectSessions((previous) => ({
+                    ...previous,
+                    [activeProject.name]:
+                      typeof updater === 'function'
+                        ? updater(previous[activeProject.name])
+                        : updater,
+                  }))
+                }}
                 onBack={() => setActiveProject(null)}
               />
             ) : activeTab === 'projects' ? (
-              <ProjectsView onOpenProject={setActiveProject} />
+              <ProjectsView onOpenProject={handleOpenProject} />
             ) : (
               <>
                 {/* Welcome Section */}

@@ -2,39 +2,61 @@ import { useEffect, useState } from 'react'
 import SimulationSection from '../simulation/SimulationSection'
 import SynthesisSection from '../synthesis/SynthesisSection'
 import PhysicalDesignSection from '../physical/PhysicalDesignSection'
+import useProjectSession from '../../hooks/useProjectSession'
 
-export default function ProjectWorkspace({ project, onBack }) {
+export default function ProjectWorkspace({
+    project,
+    session,
+    setSession,
+    onBack,
+}) {
     // ==================== PROJECT FILES ====================
     const [files, setFiles] = useState([])
     const [filesStatus, setFilesStatus] = useState('loading')
 
-    // ==================== SIMULATION ====================
-    const [simStatus, setSimStatus] = useState('idle')
-    const [simOutput, setSimOutput] = useState('')
+    // ==================== PROJECT SESSION ====================
+    const {
+        simStatus,
+        setSimStatus,
+        simOutput,
+        setSimOutput,
 
-    // ==================== SYNTHESIS STATE ====================
-    const [synthStatus, setSynthStatus] = useState('idle')
-    const [synthOutput, setSynthOutput] = useState('')
-    const [synthMetrics, setSynthMetrics] = useState(null)
-    const [synthArtifacts, setSynthArtifacts] = useState([])
-    const [synthArtifactsStatus, setSynthArtifactsStatus] = useState('idle')
+        synthStatus,
+        setSynthStatus,
+        synthOutput,
+        setSynthOutput,
+        synthMetrics,
+        setSynthMetrics,
+        synthArtifacts,
+        setSynthArtifacts,
+        synthArtifactsStatus,
+        setSynthArtifactsStatus,
 
-    // ==================== PHYSICAL DESIGN STATE ====================
-    const [physicalStatus, setPhysicalStatus] = useState('idle')
-    const [physicalOutput, setPhysicalOutput] = useState('')
-    const [physicalMetrics, setPhysicalMetrics] = useState(null)
-    const [physicalArtifacts, setPhysicalArtifacts] = useState([])
-    const [physicalArtifactsStatus, setPhysicalArtifactsStatus] = useState('idle')
+        physicalStatus,
+        setPhysicalStatus,
+        physicalOutput,
+        setPhysicalOutput,
+        physicalMetrics,
+        setPhysicalMetrics,
+        physicalArtifacts,
+        setPhysicalArtifacts,
+        physicalArtifactsStatus,
+        setPhysicalArtifactsStatus,
 
-    // ==================== ARTIFACTS ====================
-    const [artifacts, setArtifacts] = useState([])
-    const [artifactsStatus, setArtifactsStatus] = useState('idle')
-    const [artifactsError, setArtifactsError] = useState('')
+        artifacts,
+        setArtifacts,
+        artifactsStatus,
+        setArtifactsStatus,
+        artifactsError,
+        setArtifactsError,
 
-    // ==================== WAVEFORM ====================
-    const [waveform, setWaveform] = useState(null)
-    const [waveformStatus, setWaveformStatus] = useState('idle')
-    const [waveformError, setWaveformError] = useState('')
+        waveform,
+        setWaveform,
+        waveformStatus,
+        setWaveformStatus,
+        waveformError,
+        setWaveformError,
+    } = useProjectSession(session, setSession)
 
     // ==================== PROJECT FILES ====================
     useEffect(() => {
@@ -398,8 +420,8 @@ export default function ProjectWorkspace({ project, onBack }) {
 
                                     <span
                                         className={`rounded border px-2.5 py-1 text-xs font-medium uppercase tracking-wider ${file.type === 'rtl'
-                                                ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
-                                                : 'border-indigo-500/30 bg-indigo-500/10 text-indigo-400'
+                                            ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
+                                            : 'border-indigo-500/30 bg-indigo-500/10 text-indigo-400'
                                             }`}
                                     >
                                         {file.type === 'rtl'
