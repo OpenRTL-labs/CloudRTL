@@ -31,10 +31,23 @@ read_sdc /CloudRTL/git/simulator/work/counter.sdc
 # 4. Timing report
 # ------------------------------------------------------------
 
+# Setup / max-delay paths
 report_checks \
     -path_delay max \
     -format full_clock_expanded \
     > /CloudRTL/git/simulator/work/counter_timing.rpt
+
+# Hold / min-delay paths
+report_checks \
+    -path_delay min \
+    -format full_clock_expanded \
+    >> /CloudRTL/git/simulator/work/counter_timing.rpt
+
+# Timing summary
+report_wns -max >> /CloudRTL/git/simulator/work/counter_timing.rpt
+report_wns -min >> /CloudRTL/git/simulator/work/counter_timing.rpt
+report_tns -max >> /CloudRTL/git/simulator/work/counter_timing.rpt
+report_tns -min >> /CloudRTL/git/simulator/work/counter_timing.rpt
 
 # ------------------------------------------------------------
 # 5. Power report
