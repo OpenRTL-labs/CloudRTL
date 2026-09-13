@@ -3,6 +3,15 @@ import SimulationSection from '../simulation/SimulationSection'
 import SynthesisSection from '../synthesis/SynthesisSection'
 import PhysicalDesignSection from '../physical/PhysicalDesignSection'
 import useProjectSession from '../../hooks/useProjectSession'
+import {
+    getProjectFiles,
+    runSimulation,
+    getSimulationArtifacts,
+    getWaveform,
+    runSynthesis,
+    getSynthesisArtifacts,
+    runPhysicalDesign
+} from '../../services/projectApi'
 
 export default function ProjectWorkspace({
     project,
@@ -61,19 +70,9 @@ export default function ProjectWorkspace({
     // ==================== PROJECT FILES ====================
     useEffect(() => {
         let isMounted = true
-
-        fetch(`/projects/${project.name}/files`)
-            .then((response) => {
-                if (!response.ok) {
-                    throw new Error('Failed to fetch project files')
-                }
-                return response.json()
-            })
+        getProjectFiles(project.name)
             .then((data) => {
                 if (!isMounted) return
-                if (data.detail) {
-                    throw new Error(data.detail)
-                }
                 setFiles(data.files || [])
                 setFilesStatus('loaded')
             })
@@ -93,13 +92,7 @@ export default function ProjectWorkspace({
         setArtifactsStatus('loading')
         setArtifactsError('')
 
-        fetch(`/projects/${project.name}/artifacts`)
-            .then((response) => {
-                if (!response.ok) {
-                    throw new Error('Failed to fetch simulation artifacts')
-                }
-                return response.json()
-            })
+        getSimulationArtifacts(project.name)
             .then((data) => {
                 setArtifacts(data.artifacts || [])
                 setArtifactsStatus('loaded')
@@ -116,13 +109,7 @@ export default function ProjectWorkspace({
         setWaveformStatus('loading')
         setWaveformError('')
 
-        fetch(`/projects/${project.name}/waveform`)
-            .then((response) => {
-                if (!response.ok) {
-                    throw new Error('Failed to fetch waveform data')
-                }
-                return response.json()
-            })
+        getWaveform(project.name)
             .then((data) => {
                 setWaveform(data.waveform || null)
                 setWaveformStatus('loaded')
@@ -147,27 +134,7 @@ export default function ProjectWorkspace({
         setWaveformStatus('idle')
         setWaveformError('')
 
-        fetch(`/projects/${project.name}/simulate`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-        })
-            .then((res) => {
-                if (!res.ok) {
-                    return res.json().then(
-                        (err) => {
-                            throw new Error(
-                                err.detail || `Simulation request failed (${res.status})`
-                            )
-                        },
-                        () => {
-                            throw new Error(`Simulation request failed (${res.status})`)
-                        }
-                    )
-                }
-                return res.json()
-            })
+        runSimulation(project.name)
             .then((data) => {
                 if (data.status === 'success') {
                     setSimStatus('success')
@@ -183,6 +150,7 @@ export default function ProjectWorkspace({
                 setSimStatus('failed')
                 setSimOutput(err.message || 'Simulation execution failed.')
             })
+
     }
 
     // ==================== SYNTHESIS WORKFLOW ====================
@@ -193,15 +161,7 @@ export default function ProjectWorkspace({
         setSynthArtifacts([])
         setSynthArtifactsStatus('loading')
 
-        fetch(`/projects/${project.name}/synthesize`, {
-            method: 'POST',
-        })
-            .then((response) => {
-                if (!response.ok) {
-                    throw new Error('Synthesis request failed')
-                }
-                return response.json()
-            })
+        runSynthesis(project.name)
             .then((data) => {
                 if (data.status === 'success') {
                     setSynthStatus('success')
@@ -210,16 +170,7 @@ export default function ProjectWorkspace({
                     )
                     setSynthMetrics(data.metrics || null)
 
-                    fetch(`/projects/${project.name}/synthesis-artifacts`)
-                        .then((response) => {
-                            if (!response.ok) {
-                                throw new Error(
-                                    `Failed to load synthesis artifacts (${response.status})`
-                                )
-                            }
-
-                            return response.json()
-                        })
+                    getSynthesisArtifacts(project.name)
                         .then((artifactData) => {
                             setSynthArtifacts(artifactData.artifacts || [])
                             setSynthArtifactsStatus('loaded')
@@ -253,28 +204,8 @@ export default function ProjectWorkspace({
         setPhysicalArtifacts([])
         setPhysicalArtifactsStatus('idle')
 
-        fetch(`/projects/${project.name}/physical-design`, {
-            method: 'POST',
-        })
-            .then((response) => {
-                if (!response.ok) {
-                    return response.json().then(
-                        (err) => {
-                            throw new Error(
-                                err.detail ||
-                                `Physical design request failed (${response.status})`
-                            )
-                        },
-                        () => {
-                            throw new Error(
-                                `Physical design request failed (${response.status})`
-                            )
-                        }
-                    )
-                }
+        runPhysicalDesign(project.name)
 
-                return response.json()
-            })
             .then((data) => {
                 if (data.status === 'success') {
                     setPhysicalStatus('success')
