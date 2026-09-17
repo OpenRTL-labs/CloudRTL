@@ -10,12 +10,12 @@ SIMULATOR_DIR = REPO_ROOT / "simulator"
 PHYSICAL_DIR = REPO_ROOT / "physical"
 
 # ============== VCD WAVEFORM PARSER ==============
-
 def parse_vcd(vcd_path: Path):
     signals = []
     signal_map = {}
     current_scope = []
     current_time = 0
+    top_scope = None
 
     with vcd_path.open("r", encoding="utf-8", errors="replace") as vcd_file:
         for raw_line in vcd_file:
@@ -26,8 +26,14 @@ def parse_vcd(vcd_path: Path):
 
             if line.startswith("$scope"):
                 parts = line.split()
+
                 if len(parts) >= 3:
-                    current_scope.append(parts[2])
+                    scope_name = parts[2]
+                    current_scope.append(scope_name)
+
+                    if top_scope is None:
+                        top_scope = scope_name
+
                 continue
 
             if line.startswith("$upscope"):
@@ -37,21 +43,28 @@ def parse_vcd(vcd_path: Path):
 
             if line.startswith("$var"):
                 parts = line.split()
+
                 if len(parts) >= 5:
                     width = int(parts[2])
                     identifier = parts[3]
                     name = parts[4]
 
-                    full_name = ".".join(current_scope + [name])
+                    # Only expose signals declared directly
+                    # inside the top-level testbench scope.
+                    if (
+                        top_scope is not None
+                        and len(current_scope) == 1
+                        and current_scope[0] == top_scope
+                    ):
+                        signal = {
+                            "name": name,
+                            "width": width,
+                            "changes": [],
+                        }
 
-                    signal = {
-                        "name": full_name,
-                        "width": width,
-                        "changes": [],
-                    }
+                        signals.append(signal)
+                        signal_map[identifier] = signal
 
-                    signals.append(signal)
-                    signal_map[identifier] = signal
                 continue
 
             if line.startswith("#"):
@@ -59,9 +72,10 @@ def parse_vcd(vcd_path: Path):
                     current_time = int(line[1:])
                 except ValueError:
                     continue
+
                 continue
 
-            # Scalar value change: 0!, 1!, x!, z!, etc.
+            # Scalar value change
             if len(line) >= 2 and line[0] in "01xXzZ":
                 identifier = line[1:]
                 signal = signal_map.get(identifier)
@@ -73,11 +87,13 @@ def parse_vcd(vcd_path: Path):
                             "value": line[0],
                         }
                     )
+
                 continue
 
-            # Vector value change: b1010 !
+            # Vector value change
             if line.startswith("b") or line.startswith("B"):
                 parts = line.split()
+
                 if len(parts) >= 2:
                     value = parts[0][1:]
                     identifier = parts[1]
@@ -92,7 +108,6 @@ def parse_vcd(vcd_path: Path):
                         )
 
     return signals
-
 
 app = FastAPI(
     title="CloudRTL",

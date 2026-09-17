@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react'
 import { createProjectSession } from './hooks/useProjectSession'
-import SimulationSection from './components/simulation/SimulationSection'
-import SynthesisSection from './components/synthesis/SynthesisSection'
-import PhysicalDesignSection from './components/physical/PhysicalDesignSection'
 import ProjectWorkspace from './components/projects/ProjectWorkspace'
 import ProjectsView from './components/projects/ProjectsView'
 import Header from './components/layout/Header'
 import Sidebar from './components/layout/Sidebar'
 import DashboardView from './components/dashboard/DashboardView'
-
+import SimulationPage from './components/simulation/SimulationPage'
+import SynthesisPage from './components/synthesis/SynthesisPage'
+import PhysicalDesignPage from './components/physical/PhysicalDesignPage'
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -23,7 +22,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [backendStatus, setBackendStatus] = useState('checking')
   const [activeProject, setActiveProject] = useState(null)
-  const [projectSessions, setProjectSessions] = useState({})
+  const [projectSessions, setProjectSessions] = useState(() => ({
+    counter: createProjectSession(),
+  }))
 
   const handleOpenProject = (project) => {
     setActiveProject(project)
@@ -94,6 +95,45 @@ export default function App() {
               />
             ) : activeTab === 'projects' ? (
               <ProjectsView onOpenProject={handleOpenProject} />
+            ) : activeTab === 'simulation' ? (
+              <SimulationPage
+                session={projectSessions['counter']}
+                setSession={(updater) => {
+                  setProjectSessions((previous) => ({
+                    ...previous,
+                    counter:
+                      typeof updater === 'function'
+                        ? updater(previous.counter)
+                        : updater,
+                  }))
+                }}
+              />
+            ) : activeTab === 'synthesis' ? (
+              <SynthesisPage
+                session={projectSessions['counter']}
+                setSession={(updater) => {
+                  setProjectSessions((previous) => ({
+                    ...previous,
+                    counter:
+                      typeof updater === 'function'
+                        ? updater(previous.counter)
+                        : updater,
+                  }))
+                }}
+              />
+            ) : activeTab === 'physical-design' ? (
+              <PhysicalDesignPage
+                session={projectSessions['counter']}
+                setSession={(updater) => {
+                  setProjectSessions((previous) => ({
+                    ...previous,
+                    counter:
+                      typeof updater === 'function'
+                        ? updater(previous.counter)
+                        : updater,
+                  }))
+                }}
+              />
             ) : (
               <DashboardView
                 activeTab={activeTab}
