@@ -7,15 +7,16 @@ import {
   getWaveform,
 } from '../../services/projectApi'
 
-const projects = [
-  {
-    name: 'counter',
-    type: 'Verilog',
-    top_module: 'counter',
-  },
-]
+const fallbackProject = {
+  name: 'counter',
+  type: 'Verilog',
+  top_module: 'counter',
+}
 
-export default function SimulationPage({ session, setSession }) {
+export default function SimulationPage({ project, session, setSession }) {
+  const currentProject = project || fallbackProject
+  const projects = [currentProject]
+
   const {
     simStatus,
     setSimStatus,
@@ -32,11 +33,11 @@ export default function SimulationPage({ session, setSession }) {
   } = useProjectSession(session, setSession)
 
   const runStatus = {
-    counter: simStatus,
+    [currentProject.name]: simStatus,
   }
 
   const results = {
-    counter: {
+    [currentProject.name]: {
       output: simOutput,
       waveform,
       artifacts,

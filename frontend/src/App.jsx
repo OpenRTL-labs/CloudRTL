@@ -22,12 +22,14 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [backendStatus, setBackendStatus] = useState('checking')
   const [activeProject, setActiveProject] = useState(null)
+  const [selectedProject, setSelectedProject] = useState(null)
   const [projectSessions, setProjectSessions] = useState(() => ({
     counter: createProjectSession(),
   }))
 
   const handleOpenProject = (project) => {
     setActiveProject(project)
+    setSelectedProject(project)
 
     setProjectSessions((previous) => {
       if (previous[project.name]) {
@@ -97,13 +99,18 @@ export default function App() {
               <ProjectsView onOpenProject={handleOpenProject} />
             ) : activeTab === 'simulation' ? (
               <SimulationPage
-                session={projectSessions['counter']}
+                project={selectedProject}
+                session={
+                  projectSessions[selectedProject?.name] ||
+                  projectSessions['counter']
+                }
                 setSession={(updater) => {
+                  const targetProjectName = selectedProject?.name || 'counter'
                   setProjectSessions((previous) => ({
                     ...previous,
-                    counter:
+                    [targetProjectName]:
                       typeof updater === 'function'
-                        ? updater(previous.counter)
+                        ? updater(previous[targetProjectName])
                         : updater,
                   }))
                 }}
