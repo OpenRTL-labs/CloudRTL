@@ -131,6 +131,12 @@ class CreateProjectRequest(BaseModel):
     top_module: str
     technology: str
 
+class AddFileRequest(BaseModel):
+    name: str
+    type: str
+    content: str = ""
+
+
 class SimulationResponse(BaseModel):
     project: str
     status: str
@@ -236,6 +242,80 @@ def get_project_files(project_name: str):
             }
 
     raise HTTPException(status_code=404, detail="Project not found")
+
+@app.post("/projects/{project_name}/files", status_code=201)
+def add_project_file(project_name: str, request: AddFileRequest):
+    matched_project = next((p for p in projects if p.name == project_name), None)
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    filename = request.name.strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="File name cannot be empty.")
+
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file name: path traversal is not allowed.",
+        )
+
+    file_type = request.type.strip()
+    if file_type not in ("rtl", "testbench"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file type: must be 'rtl' or 'testbench'.",
+        )
+
+    if not (filename.endswith(".v") or filename.endswith(".sv")):
+        raise HTTPException(
+            status_code=400,
+            detail="File must have a .v or .sv extension.",
+        )
+
+    current_files = project_files.setdefault(matched_project.name, [])
+    if any(f.name.lower() == filename.lower() for f in current_files):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File '{filename}' already exists in project '{matched_project.name}'.",
+        )
+
+    if file_type == "rtl":
+        target_dir = SIMULATOR_DIR / "examples"
+    else:
+        target_dir = SIMULATOR_DIR / "tests"
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / filename
+
+    if target_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"File '{filename}' already exists in shared {file_type} storage. Choose a different filename.",
+        )
+
+    if target_path.exists():
+        storage_label = "RTL" if file_type == "rtl" else "testbench"
+        raise HTTPException(
+            status_code=400,
+            detail=f"File '{filename}' already exists in the shared {storage_label} storage. Choose a different filename.",
+        )
+
+    try:
+        target_path.write_text(request.content, encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to write file to disk: {str(exc)}",
+        )
+
+    new_file = ProjectFile(name=filename, type=file_type)
+    current_files.append(new_file)
+
+    return {
+        "project": matched_project.name,
+        "file": new_file,
+    }
+
 
 @app.post("/projects/{project_name}/simulate", response_model=SimulationResponse)
 def simulate_project(project_name: str):

@@ -117,4 +117,24 @@ export async function createProject(projectData) {
     }
 
     return response.json()
-}
+}
+
+export async function addProjectFile(projectName, fileData) {
+    const response = await fetch(`/projects/${projectName}/files`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(fileData),
+    })
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => null)
+        throw new Error(
+            error?.detail || `Failed to add file (${response.status})`
+        )
+    }
+
+    return response.json()
+}
+

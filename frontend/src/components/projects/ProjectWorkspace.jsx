@@ -5,6 +5,7 @@ import PhysicalDesignSection from '../physical/PhysicalDesignSection'
 import useProjectSession from '../../hooks/useProjectSession'
 import {
   getProjectFiles,
+  addProjectFile,
   runSimulation,
   getSimulationArtifacts,
   getWaveform,
@@ -22,6 +23,15 @@ export default function ProjectWorkspace({
   // ==================== PROJECT FILES ====================
   const [files, setFiles] = useState([])
   const [filesStatus, setFilesStatus] = useState('loading')
+
+  // File management local state
+  const [isAddingFile, setIsAddingFile] = useState(false)
+  const [fileName, setFileName] = useState('')
+  const [fileType, setFileType] = useState('rtl')
+  const [fileContent, setFileContent] = useState('')
+  const [isSubmittingFile, setIsSubmittingFile] = useState(false)
+  const [fileError, setFileError] = useState('')
+  const [fileSuccess, setFileSuccess] = useState('')
 
   // ==================== PROJECT SESSION ====================
   const {
@@ -68,6 +78,17 @@ export default function ProjectWorkspace({
   } = useProjectSession(session, setSession)
 
   // ==================== PROJECT FILES ====================
+  const loadProjectFiles = () => {
+    return getProjectFiles(project.name)
+      .then((data) => {
+        setFiles(data.files || [])
+        setFilesStatus('loaded')
+      })
+      .catch(() => {
+        setFilesStatus('error')
+      })
+  }
+
   useEffect(() => {
     let isMounted = true
     getProjectFiles(project.name)
@@ -82,10 +103,57 @@ export default function ProjectWorkspace({
         }
       })
 
+    setIsAddingFile(false)
+    setFileSuccess('')
+    setFileError('')
+    setFileName('')
+    setFileContent('')
+    setFileType('rtl')
+
     return () => {
       isMounted = false
     }
   }, [project.name])
+
+  const handleAddFile = async (e) => {
+    e.preventDefault()
+    setFileError('')
+    setFileSuccess('')
+
+    const trimmedName = fileName.trim()
+    if (!trimmedName) {
+      setFileError('File name cannot be empty.')
+      return
+    }
+
+    setIsSubmittingFile(true)
+    try {
+      await addProjectFile(project.name, {
+        name: trimmedName,
+        type: fileType,
+        content: fileContent,
+      })
+
+      setFileSuccess(`File "${trimmedName}" added successfully.`)
+      setFileName('')
+      setFileType('rtl')
+      setFileContent('')
+      setIsAddingFile(false)
+      await loadProjectFiles()
+    } catch (err) {
+      setFileError(err.message || 'Failed to add file.')
+    } finally {
+      setIsSubmittingFile(false)
+    }
+  }
+
+  const handleCancelAddFile = () => {
+    setIsAddingFile(false)
+    setFileName('')
+    setFileType('rtl')
+    setFileContent('')
+    setFileError('')
+  }
 
   // ==================== ARTIFACT HANDLING ====================
   const fetchArtifacts = () => {
@@ -312,12 +380,113 @@ export default function ProjectWorkspace({
             </h2>
           </div>
 
-          {filesStatus === 'loaded' && (
-            <span className="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-300">
-              {files.length} {files.length === 1 ? 'file' : 'files'}
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {filesStatus === 'loaded' && (
+              <span className="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-300">
+                {files.length} {files.length === 1 ? 'file' : 'files'}
+              </span>
+            )}
+
+            {!isAddingFile && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddingFile(true)
+                  setFileError('')
+                  setFileSuccess('')
+                }}
+                className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-400 transition-colors hover:bg-cyan-500/20"
+              >
+                + Add File
+              </button>
+            )}
+          </div>
         </div>
+
+        {fileSuccess && (
+          <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-400">
+            {fileSuccess}
+          </div>
+        )}
+
+        {isAddingFile && (
+          <form onSubmit={handleAddFile} className="mt-4 space-y-4 rounded-lg border border-slate-800 bg-slate-950/80 p-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-white">Add New File</h3>
+              <span className="text-xs text-slate-400">Supported: .v, .sv</span>
+            </div>
+
+            {fileError && (
+              <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+                {fileError}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-xs font-medium text-slate-300">
+                  File Name <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={fileName}
+                  onChange={(e) => setFileName(e.target.value)}
+                  placeholder="e.g. counter.v"
+                  disabled={isSubmittingFile}
+                  className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-900 px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300">
+                  File Type <span className="text-red-400">*</span>
+                </label>
+                <select
+                  value={fileType}
+                  onChange={(e) => setFileType(e.target.value)}
+                  disabled={isSubmittingFile}
+                  className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-900 px-3.5 py-2 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none"
+                >
+                  <option value="rtl">RTL Source</option>
+                  <option value="testbench">Testbench</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-300">
+                File Content
+              </label>
+              <textarea
+                value={fileContent}
+                onChange={(e) => setFileContent(e.target.value)}
+                placeholder="// Enter Verilog RTL or Testbench code here..."
+                rows={8}
+                disabled={isSubmittingFile}
+                className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-900 px-3.5 py-2 font-mono text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="submit"
+                disabled={isSubmittingFile}
+                className="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isSubmittingFile ? 'Adding File...' : 'Add File'}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCancelAddFile}
+                disabled={isSubmittingFile}
+                className="rounded-md border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
 
         {filesStatus === 'loading' && (
           <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400">
