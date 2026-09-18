@@ -126,6 +126,11 @@ class ProjectFile(BaseModel):
     name: str
     type: str
 
+class CreateProjectRequest(BaseModel):
+    name: str
+    top_module: str
+    technology: str
+
 class SimulationResponse(BaseModel):
     project: str
     status: str
@@ -174,6 +179,44 @@ def health_check():
 @app.get("/projects")
 def get_projects():
     return {"projects": projects}
+
+@app.post("/projects", status_code=201)
+def create_project(request: CreateProjectRequest):
+    name = request.name.strip()
+    top_module = request.top_module.strip()
+    technology = request.technology.strip()
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Project name cannot be empty.")
+    if not top_module:
+        raise HTTPException(status_code=400, detail="Top module cannot be empty.")
+    if not technology:
+        raise HTTPException(status_code=400, detail="Technology cannot be empty.")
+
+    if "/" in name or "\\" in name:
+        raise HTTPException(
+            status_code=400,
+            detail="Project name cannot contain path separators ('/' or '\\').",
+        )
+
+    if any(p.name.lower() == name.lower() for p in projects):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Project with name '{name}' already exists.",
+        )
+
+    new_project = Project(
+        name=name,
+        type="RTL Design Project",
+        technology=technology,
+        top_module=top_module,
+        status="ready",
+    )
+
+    projects.append(new_project)
+    project_files[name] = []
+
+    return {"project": new_project}
 
 @app.get("/projects/{project_name}")
 def get_project(project_name: str):

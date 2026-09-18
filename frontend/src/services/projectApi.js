@@ -99,3 +99,22 @@ export async function runPhysicalDesign(projectName) {
 
     return response.json()
 }
+
+export async function createProject(projectData) {
+    const response = await fetch('/projects', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(projectData),
+    })
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => null)
+        throw new Error(
+            error?.detail || `Project creation failed (${response.status})`
+        )
+    }
+
+    return response.json()
+}
