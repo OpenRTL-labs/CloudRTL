@@ -13,7 +13,7 @@ const fallbackProject = {
   top_module: 'counter',
 }
 
-export default function SimulationPage({ project, session, setSession }) {
+export default function SimulationPage({ project, session, setSession, onAddNewDesign }) {
   const currentProject = project || fallbackProject
   const projects = [currentProject]
 
@@ -130,6 +130,7 @@ export default function SimulationPage({ project, session, setSession }) {
 
           <button
             type="button"
+            onClick={onAddNewDesign}
             className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-400 transition-colors hover:bg-cyan-500/20"
           >
             + Add New Design

@@ -1,14 +1,17 @@
 export default function WaveformDisplay({ waveform }) {
   const signals = waveform.signals || []
 
-  const maxTime = Math.max(
+  const lastTime = Math.max(
     1,
     ...signals.flatMap((signal) =>
       (signal.changes || []).map((change) => change.time)
     )
   )
 
-  const waveformWidth = 700
+  // Add some space after the final transition so the last value is visible.
+  const maxTime = Math.ceil(lastTime * 1.1)
+
+  const waveformWidth = 1600
   const rowHeight = 56
   const labelWidth = 120
   const totalHeight = Math.max(80, signals.length * rowHeight)
@@ -17,7 +20,7 @@ export default function WaveformDisplay({ waveform }) {
 
   return (
     <div className="mt-4 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950">
-      <div className="min-w-[900px] p-4">
+      <div className="min-w-[1750px] p-4">
         <div className="mb-3 flex items-center text-xs text-slate-500">
           <div
             className="flex-shrink-0"
@@ -79,7 +82,7 @@ export default function WaveformDisplay({ waveform }) {
                 <svg
                   viewBox={`0 0 ${waveformWidth} 40`}
                   preserveAspectRatio="none"
-                  className="h-10 flex-1"
+                  className="h-10 w-[1600px] flex-none"
                 >
                   {changes.length > 0 &&
                     changes.map((change, index) => {
@@ -89,6 +92,49 @@ export default function WaveformDisplay({ waveform }) {
                         ? getX(nextChange.time)
                         : waveformWidth
 
+                      const isVector = signal.width > 1
+
+                      if (isVector) {
+                        return (
+                          <g key={`${signal.name}-${change.time}-${index}`}>
+                            {/* Bus line */}
+                            <line
+                              x1={startX}
+                              y1="20"
+                              x2={endX}
+                              y2="20"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            />
+
+                            {/* Transition */}
+                            {index > 0 && (
+                              <line
+                                x1={startX}
+                                y1="10"
+                                x2={startX}
+                                y2="30"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              />
+                            )}
+
+                            {/* Vector value */}
+                            <text
+                              x={(startX + endX) / 2}
+                              y="24"
+                              textAnchor="middle"
+                              className="fill-slate-300"
+                              fontSize="11"
+                              fontFamily="monospace"
+                            >
+                              {change.value}
+                            </text>
+                          </g>
+                        )
+                      }
+
+                      // Scalar signal
                       const isHigh = change.value === '1'
                       const y = isHigh ? 8 : 28
 

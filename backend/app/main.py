@@ -243,6 +243,68 @@ def get_project_files(project_name: str):
 
     raise HTTPException(status_code=404, detail="Project not found")
 
+@app.get("/projects/{project_name}/files/{filename}")
+def get_project_file(project_name: str, filename: str):
+    matched_project = next(
+        (p for p in projects if p.name == project_name),
+        None,
+    )
+
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if (
+        filename != Path(filename).name
+        or "/" in filename
+        or "\\" in filename
+        or ".." in filename
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file name: path traversal is not allowed.",
+        )
+
+    current_files = project_files.get(matched_project.name, [])
+
+    matched_file = next(
+        (f for f in current_files if f.name.lower() == filename.lower()),
+        None,
+    )
+
+    if not matched_file:
+        raise HTTPException(
+            status_code=404,
+            detail=f"File '{filename}' not found in project '{project_name}'.",
+        )
+
+    if matched_file.type == "rtl":
+        target_path = SIMULATOR_DIR / "examples" / matched_file.name
+    else:
+        target_path = SIMULATOR_DIR / "tests" / matched_file.name
+
+    if not target_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"File '{matched_file.name}' was not found on disk.",
+        )
+
+    try:
+        content = target_path.read_text(
+            encoding="utf-8",
+            errors="replace",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read file: {str(exc)}",
+        )
+
+    return {
+        "project": matched_project.name,
+        "file": matched_file,
+        "content": content,
+    }
+
 @app.post("/projects/{project_name}/files", status_code=201)
 def add_project_file(project_name: str, request: AddFileRequest):
     matched_project = next((p for p in projects if p.name == project_name), None)
@@ -288,17 +350,17 @@ def add_project_file(project_name: str, request: AddFileRequest):
     target_path = target_dir / filename
 
     if target_path.exists():
-        raise HTTPException(
-            status_code=400,
-            detail=f"File '{filename}' already exists in shared {file_type} storage. Choose a different filename.",
+        registered_elsewhere = any(
+            any(f.name.lower() == filename.lower() for f in files)
+            for project, files in project_files.items()
+            if project != matched_project.name
         )
 
-    if target_path.exists():
-        storage_label = "RTL" if file_type == "rtl" else "testbench"
-        raise HTTPException(
-            status_code=400,
-            detail=f"File '{filename}' already exists in the shared {storage_label} storage. Choose a different filename.",
-        )
+        if registered_elsewhere:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File '{filename}' is already registered to another project.",
+            )
 
     try:
         target_path.write_text(request.content, encoding="utf-8")
@@ -316,6 +378,68 @@ def add_project_file(project_name: str, request: AddFileRequest):
         "file": new_file,
     }
 
+@app.put("/projects/{project_name}/files/{filename}")
+def update_project_file(
+    project_name: str,
+    filename: str,
+    request: AddFileRequest,
+):
+    matched_project = next(
+        (p for p in projects if p.name == project_name),
+        None,
+    )
+
+    if not matched_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if (
+        filename != Path(filename).name
+        or "/" in filename
+        or "\\" in filename
+        or ".." in filename
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file name: path traversal is not allowed.",
+        )
+
+    current_files = project_files.get(matched_project.name, [])
+
+    matched_file = next(
+        (f for f in current_files if f.name.lower() == filename.lower()),
+        None,
+    )
+
+    if not matched_file:
+        raise HTTPException(
+            status_code=404,
+            detail=f"File '{filename}' not found in project '{project_name}'.",
+        )
+
+    if matched_file.type == "rtl":
+        target_path = SIMULATOR_DIR / "examples" / matched_file.name
+    else:
+        target_path = SIMULATOR_DIR / "tests" / matched_file.name
+
+    if not target_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"File '{matched_file.name}' was not found on disk.",
+        )
+
+    try:
+        target_path.write_text(request.content, encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update file: {str(exc)}",
+        )
+
+    return {
+        "project": matched_project.name,
+        "file": matched_file,
+        "message": f"File '{matched_file.name}' updated successfully.",
+    }
 
 @app.post("/projects/{project_name}/simulate", response_model=SimulationResponse)
 def simulate_project(project_name: str):
@@ -557,7 +681,85 @@ def synthesize_project(project_name: str):
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # --------------------------------------------------------
-    # Step 1: Run Yosys synthesis
+    # Step 1: Prepare project-specific Yosys synthesis script
+    # --------------------------------------------------------
+
+    files = project_files.get(matched_project.name, [])
+    rtl_files = [f for f in files if f.type == "rtl"]
+
+    if not rtl_files:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No RTL files found for project '{project_name}'",
+        )
+
+    for f in rtl_files:
+        rtl_path = SIMULATOR_DIR / "examples" / f.name
+
+        if not rtl_path.is_file():
+            raise HTTPException(
+                status_code=400,
+                detail=f"RTL file '{f.name}' not found in simulator/examples.",
+            )
+
+    synthesis_template_path = SIMULATOR_DIR / "scripts" / "synthesize.ys"
+
+    if not synthesis_template_path.is_file():
+        raise HTTPException(
+            status_code=500,
+            detail="Synthesis template 'synthesize.ys' not found.",
+        )
+
+    synthesis_script = synthesis_template_path.read_text(
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    rtl_commands = "\n".join(
+        f'read_verilog "/CloudRTL/git/simulator/examples/{f.name}"'
+        for f in rtl_files
+    )
+
+    synthesis_script = synthesis_script.replace(
+        "read_verilog /CloudRTL/git/simulator/examples/counter.v",
+        rtl_commands,
+        1,
+    )
+
+    synthesis_script = synthesis_script.replace(
+        "hierarchy -check -top counter",
+        f"hierarchy -check -top {matched_project.top_module}",
+        1,
+    )
+
+    synthesis_script = synthesis_script.replace(
+        """write_verilog \\
+    -noattr \\
+    -noexpr \\
+    /CloudRTL/git/simulator/work/counter_netlist.v""",
+        """write_verilog \\
+    -noattr \\
+    -noexpr \\
+    /CloudRTL/git/simulator/work/"""
+        + f"{project_name}_netlist.v",
+        1,
+    )
+
+    project_synthesis_script = work_dir / f"{project_name}_synthesize.ys"
+
+    try:
+        project_synthesis_script.write_text(
+            synthesis_script,
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to prepare project synthesis script: {str(exc)}",
+        )
+
+    # --------------------------------------------------------
+    # Step 2: Run Yosys synthesis
     # --------------------------------------------------------
 
     try:
@@ -575,7 +777,7 @@ def synthesize_project(project_name: str):
                 "cloudrtl-eda:0.2",
                 "yosys",
                 "-s",
-                "/CloudRTL/git/simulator/scripts/synthesize.ys",
+                f"/CloudRTL/git/simulator/work/{project_name}_synthesize.ys",
             ],
             capture_output=True,
             text=True,
@@ -607,7 +809,7 @@ def synthesize_project(project_name: str):
         }
 
     # --------------------------------------------------------
-    # Step 2: Verify synthesized netlist
+    # Step 3: Verify synthesized netlist
     # --------------------------------------------------------
 
     netlist_path = work_dir / f"{project_name}_netlist.v"
@@ -623,7 +825,7 @@ def synthesize_project(project_name: str):
         }
 
     # --------------------------------------------------------
-    # Step 3: Generate SDC constraints
+    # Step 4: Generate SDC constraints
     # --------------------------------------------------------
 
     sdc_path = work_dir / f"{project_name}.sdc"
@@ -634,7 +836,63 @@ def synthesize_project(project_name: str):
     )
 
     # --------------------------------------------------------
-    # Step 4: Run post-synthesis timing and power analysis
+    # Step 5: Prepare project-specific post-synthesis analysis
+    # --------------------------------------------------------
+
+    analysis_template_path = SIMULATOR_DIR / "scripts" / "analysis.tcl"
+
+    if not analysis_template_path.is_file():
+        raise HTTPException(
+            status_code=500,
+            detail="Analysis template 'analysis.tcl' not found.",
+        )
+
+    analysis_script = analysis_template_path.read_text(
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    # Replace project-specific counter references in the template.
+    analysis_script = analysis_script.replace(
+        "counter_netlist.v",
+        f"{project_name}_netlist.v",
+    )
+
+    analysis_script = analysis_script.replace(
+        "link_design counter",
+        f"link_design {matched_project.top_module}",
+    )
+
+    analysis_script = analysis_script.replace(
+        "counter.sdc",
+        f"{project_name}.sdc",
+    )
+
+    analysis_script = analysis_script.replace(
+        "counter_timing.rpt",
+        f"{project_name}_timing.rpt",
+    )
+
+    analysis_script = analysis_script.replace(
+        "counter_power.rpt",
+        f"{project_name}_power.rpt",
+    )
+
+    project_analysis_script = work_dir / f"{project_name}_analysis.tcl"
+
+    try:
+        project_analysis_script.write_text(
+            analysis_script,
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to prepare project analysis script: {str(exc)}",
+        )
+
+    # --------------------------------------------------------
+    # Step 6: Run post-synthesis timing and power analysis
     # --------------------------------------------------------
 
     analysis_command = [
@@ -642,7 +900,7 @@ def synthesize_project(project_name: str):
         "exec",
         "openroad-work",
         "/CloudRTL/tools/OpenROAD-flow-scripts/tools/OpenROAD/build/bin/openroad",
-        "/CloudRTL/git/simulator/scripts/analysis.tcl",
+        f"/CloudRTL/git/simulator/work/{project_name}_analysis.tcl",
     ]
 
     try:
@@ -685,7 +943,7 @@ def synthesize_project(project_name: str):
         }
 
     # --------------------------------------------------------
-    # Step 5: Collect synthesis artifacts
+    # Step 6: Collect synthesis artifacts
     # --------------------------------------------------------
 
     expected_artifacts = [

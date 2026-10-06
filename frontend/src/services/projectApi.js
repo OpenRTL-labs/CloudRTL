@@ -14,6 +14,23 @@ export async function getProjectFiles(projectName) {
     return data
 }
 
+export async function getProjectFile(projectName, filename) {
+    const response = await fetch(
+        `/projects/${encodeURIComponent(projectName)}/files/${encodeURIComponent(filename)}`
+    )
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => null)
+
+        throw new Error(
+            error?.detail ||
+            `Failed to fetch file (${response.status})`
+        )
+    }
+
+    return response.json()
+}
+
 export async function runSimulation(projectName) {
     const response = await fetch(`/projects/${projectName}/simulate`, {
         method: 'POST',
@@ -137,4 +154,30 @@ export async function addProjectFile(projectName, fileData) {
 
     return response.json()
 }
-
+
+export async function updateProjectFile(projectName, filename, content, type) {
+    const response = await fetch(
+        `/projects/${encodeURIComponent(projectName)}/files/${encodeURIComponent(filename)}`,
+        {
+            method: "PUT",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                name: filename,
+                type,
+                content,
+            }),
+        }
+    )
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+
+        throw new Error(
+            errorData.detail || `Failed to update file: ${response.status}`
+        )
+    }
+
+    return response.json()
+}

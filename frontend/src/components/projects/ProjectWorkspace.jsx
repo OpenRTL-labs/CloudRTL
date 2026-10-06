@@ -5,7 +5,9 @@ import PhysicalDesignSection from '../physical/PhysicalDesignSection'
 import useProjectSession from '../../hooks/useProjectSession'
 import {
   getProjectFiles,
+  getProjectFile,
   addProjectFile,
+  updateProjectFile,
   runSimulation,
   getSimulationArtifacts,
   getWaveform,
@@ -32,6 +34,10 @@ export default function ProjectWorkspace({
   const [isSubmittingFile, setIsSubmittingFile] = useState(false)
   const [fileError, setFileError] = useState('')
   const [fileSuccess, setFileSuccess] = useState('')
+  const [editingFile, setEditingFile] = useState(null)
+  const [editContent, setEditContent] = useState('')
+  const [isLoadingFile, setIsLoadingFile] = useState(false)
+  const [isSavingFile, setIsSavingFile] = useState(false)
 
   // ==================== PROJECT SESSION ====================
   const {
@@ -153,6 +159,54 @@ export default function ProjectWorkspace({
     setFileType('rtl')
     setFileContent('')
     setFileError('')
+  }
+
+  const handleEditFile = async (file) => {
+    setFileError('')
+    setFileSuccess('')
+    setIsLoadingFile(true)
+
+    try {
+      const data = await getProjectFile(project.name, file.name)
+
+      setEditingFile(file)
+      setEditContent(data.content || '')
+    } catch (err) {
+      setFileError(err.message || 'Failed to load file.')
+    } finally {
+      setIsLoadingFile(false)
+    }
+  }
+
+  const handleCancelEditFile = () => {
+    setEditingFile(null)
+    setEditContent('')
+    setFileError('')
+  }
+
+  const handleSaveFile = async () => {
+    if (!editingFile) return
+
+    setFileError('')
+    setFileSuccess('')
+    setIsSavingFile(true)
+
+    try {
+      await updateProjectFile(
+        project.name,
+        editingFile.name,
+        editContent,
+        editingFile.type
+      )
+
+      setFileSuccess(`File "${editingFile.name}" updated successfully.`)
+      setEditingFile(null)
+      setEditContent('')
+    } catch (err) {
+      setFileError(err.message || 'Failed to update file.')
+    } finally {
+      setIsSavingFile(false)
+    }
   }
 
   // ==================== ARTIFACT HANDLING ====================
@@ -403,6 +457,55 @@ export default function ProjectWorkspace({
           </div>
         </div>
 
+        {editingFile && (
+          <div className="mt-4 rounded-lg border border-cyan-500/30 bg-slate-950/80 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-white">
+                  Editing {editingFile.name}
+                </h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  {editingFile.type === 'rtl' ? 'RTL Source' : 'Testbench'}
+                </p>
+              </div>
+            </div>
+
+            {fileError && (
+              <div className="mt-4 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+                {fileError}
+              </div>
+            )}
+
+            <textarea
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              disabled={isSavingFile}
+              rows={18}
+              className="mt-4 w-full rounded-lg border border-slate-700 bg-slate-900 px-3.5 py-2 font-mono text-xs text-slate-100 focus:border-cyan-500 focus:outline-none"
+            />
+
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleSaveFile}
+                disabled={isSavingFile}
+                className="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isSavingFile ? 'Saving...' : 'Save Changes'}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCancelEditFile}
+                disabled={isSavingFile}
+                className="rounded-md border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-700 hover:text-white"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {fileSuccess && (
           <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-400">
             {fileSuccess}
@@ -517,6 +620,17 @@ export default function ProjectWorkspace({
                       {file.name}
                     </span>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleEditFile(file)}
+                    disabled={isLoadingFile || isSavingFile}
+                    className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isLoadingFile && editingFile?.name === file.name
+                      ? 'Loading...'
+                      : 'Edit'}
+                  </button>
 
                   <span
                     className={`rounded border px-2.5 py-1 text-xs font-medium uppercase tracking-wider ${file.type === 'rtl'

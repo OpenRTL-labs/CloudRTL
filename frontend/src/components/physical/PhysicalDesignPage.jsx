@@ -10,7 +10,7 @@ const projects = [
   },
 ]
 
-export default function PhysicalDesignPage({ session, setSession }) {
+export default function PhysicalDesignPage({ session, setSession, onAddNewDesign }) {
   const {
     physicalStatus,
     setPhysicalStatus,
@@ -126,6 +126,7 @@ export default function PhysicalDesignPage({ session, setSession }) {
 
           <button
             type="button"
+            onClick={onAddNewDesign}
             className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-400 transition-colors hover:bg-cyan-500/20"
           >
             + Add New Design

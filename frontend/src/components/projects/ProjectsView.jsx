@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createProject } from '../../services/projectApi'
 
-export default function ProjectsView({ onOpenProject }) {
+export default function ProjectsView({ onOpenProject, openCreateProject }) {
     const [projects, setProjects] = useState([])
     const [projectsStatus, setProjectsStatus] = useState('loading')
 
@@ -12,6 +12,13 @@ export default function ProjectsView({ onOpenProject }) {
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [formError, setFormError] = useState('')
     const [formSuccess, setFormSuccess] = useState('')
+    useEffect(() => {
+        if (openCreateProject) {
+            setIsCreating(true)
+            setFormError('')
+            setFormSuccess('')
+        }
+    }, [openCreateProject])
 
     const loadProjects = () => {
         return fetch('/projects')
@@ -272,4 +279,4 @@ export default function ProjectsView({ onOpenProject }) {
             </div>
         </div>
     )
-}
+}

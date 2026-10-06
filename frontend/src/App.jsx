@@ -26,6 +26,7 @@ export default function App() {
   const [projectSessions, setProjectSessions] = useState(() => ({
     counter: createProjectSession(),
   }))
+  const [openCreateProject, setOpenCreateProject] = useState(false)
 
   const handleOpenProject = (project) => {
     setActiveProject(project)
@@ -72,6 +73,9 @@ export default function App() {
           onNavigate={(tabId) => {
             setActiveTab(tabId)
             setActiveProject(null)
+            if (tabId !== 'projects') {
+              setOpenCreateProject(false)
+            }
           }}
           backendStatus={backendStatus}
         />
@@ -96,7 +100,10 @@ export default function App() {
                 onBack={() => setActiveProject(null)}
               />
             ) : activeTab === 'projects' ? (
-              <ProjectsView onOpenProject={handleOpenProject} />
+              <ProjectsView
+                onOpenProject={handleOpenProject}
+                openCreateProject={false}
+              />
             ) : activeTab === 'simulation' ? (
               <SimulationPage
                 project={selectedProject}
@@ -114,18 +121,20 @@ export default function App() {
                         : updater,
                   }))
                 }}
+                onAddNewDesign={() => {
+                  setActiveTab('projects')
+                  setActiveProject(null)
+                }}
               />
             ) : activeTab === 'synthesis' ? (
               <SynthesisPage
-                session={projectSessions['counter']}
-                setSession={(updater) => {
-                  setProjectSessions((previous) => ({
-                    ...previous,
-                    counter:
-                      typeof updater === 'function'
-                        ? updater(previous.counter)
-                        : updater,
-                  }))
+                projectSessions={projectSessions}
+                setProjectSessions={setProjectSessions}
+                onAddNewDesign={() => {
+                  setActiveProject(null)
+                  setSelectedProject(null)
+                  setOpenCreateProject(true)
+                  setActiveTab('projects')
                 }}
               />
             ) : activeTab === 'physical-design' ? (
@@ -139,6 +148,10 @@ export default function App() {
                         ? updater(previous.counter)
                         : updater,
                   }))
+                }}
+                onAddNewDesign={() => {
+                  setActiveTab('projects')
+                  setActiveProject(null)
                 }}
               />
             ) : (
