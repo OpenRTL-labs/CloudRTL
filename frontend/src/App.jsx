@@ -113,6 +113,7 @@ export default function App() {
                 }
                 setSession={(updater) => {
                   const targetProjectName = selectedProject?.name || 'counter'
+
                   setProjectSessions((previous) => ({
                     ...previous,
                     [targetProjectName]:
@@ -121,6 +122,8 @@ export default function App() {
                         : updater,
                   }))
                 }}
+                projectSessions={projectSessions}
+                setProjectSessions={setProjectSessions}
                 onAddNewDesign={() => {
                   setActiveTab('projects')
                   setActiveProject(null)
@@ -139,16 +142,24 @@ export default function App() {
               />
             ) : activeTab === 'physical-design' ? (
               <PhysicalDesignPage
-                session={projectSessions['counter']}
+                project={selectedProject}
+                session={
+                  projectSessions[selectedProject?.name] ||
+                  projectSessions['counter']
+                }
                 setSession={(updater) => {
+                  const targetProjectName = selectedProject?.name || 'counter'
+
                   setProjectSessions((previous) => ({
                     ...previous,
-                    counter:
+                    [targetProjectName]:
                       typeof updater === 'function'
-                        ? updater(previous.counter)
+                        ? updater(previous[targetProjectName])
                         : updater,
                   }))
                 }}
+                projectSessions={projectSessions}
+                setProjectSessions={setProjectSessions}
                 onAddNewDesign={() => {
                   setActiveTab('projects')
                   setActiveProject(null)

@@ -1,16 +1,32 @@
+import { useEffect, useState } from 'react'
 import useProjectSession from '../../hooks/useProjectSession'
 import { runPhysicalDesign } from '../../services/projectApi'
 
-const projects = [
-  {
-    name: 'counter',
-    type: 'Verilog',
-    top_module: 'counter',
-    technology: 'Nangate45',
-  },
-]
+export default function PhysicalDesignPage({
+  session,
+  setSession,
+  onAddNewDesign,
+  projectSessions,
+  setProjectSessions,
+}) {
+  const [projects, setProjects] = useState([])
 
-export default function PhysicalDesignPage({ session, setSession, onAddNewDesign }) {
+  useEffect(() => {
+    fetch('/projects')
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Failed to load projects')
+        }
+        return response.json()
+      })
+      .then((data) => {
+        setProjects(data.projects || [])
+      })
+      .catch((error) => {
+        console.error('Failed to load projects:', error)
+      })
+  }, [])
+
   const {
     physicalStatus,
     setPhysicalStatus,
