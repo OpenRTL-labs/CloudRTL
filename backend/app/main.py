@@ -1,9 +1,13 @@
 import re
 import subprocess
 from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+from .auth import router as auth_router
+from .database import test_database_connection
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SIMULATOR_DIR = REPO_ROOT / "simulator"
@@ -115,6 +119,8 @@ app = FastAPI(
     version="0.1.0",
 )
 
+app.include_router(auth_router)
+
 class Project(BaseModel):
     name: str
     type: str
@@ -181,6 +187,17 @@ def root():
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+@app.get("/db-health")
+def database_health_check():
+    try:
+        test_database_connection()
+        return {"status": "database connected"}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database connection failed: {str(exc)}",
+        )
 
 @app.get("/projects")
 def get_projects():

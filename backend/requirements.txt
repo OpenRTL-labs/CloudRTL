@@ -1,2 +1,6 @@
 fastapi
 uvicorn[standard]
+sqlalchemy # database interaction
+psycopg[binary] # for postgresql database
+pwdlib[argon2]
+pyjwt

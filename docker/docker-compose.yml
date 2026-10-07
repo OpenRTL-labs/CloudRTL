@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: cloudrtl-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cloudrtl
+      POSTGRES_USER: cloudrtl
+      POSTGRES_PASSWORD: cloudrtl_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - cloudrtl_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudrtl -d cloudrtl"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  cloudrtl_postgres_data:
