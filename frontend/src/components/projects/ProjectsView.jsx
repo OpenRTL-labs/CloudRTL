@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createProject } from '../../services/projectApi'
+import { createProject, getProjects } from '../../services/projectApi'
 
 export default function ProjectsView({ onOpenProject, openCreateProject }) {
     const [projects, setProjects] = useState([])
@@ -14,6 +14,7 @@ export default function ProjectsView({ onOpenProject, openCreateProject }) {
     const [formSuccess, setFormSuccess] = useState('')
     useEffect(() => {
         if (openCreateProject) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setIsCreating(true)
             setFormError('')
             setFormSuccess('')
@@ -21,13 +22,7 @@ export default function ProjectsView({ onOpenProject, openCreateProject }) {
     }, [openCreateProject])
 
     const loadProjects = () => {
-        return fetch('/projects')
-            .then((response) => {
-                if (!response.ok) {
-                    throw new Error('Failed to fetch projects')
-                }
-                return response.json()
-            })
+        return getProjects()
             .then((data) => {
                 setProjects(data.projects)
                 setProjectsStatus('loaded')

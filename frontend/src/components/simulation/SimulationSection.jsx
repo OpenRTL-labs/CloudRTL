@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { downloadSimulationArtifact } from '../../services/projectApi'
 import WaveformDisplay from './WaveformDisplay'
 
 export default function SimulationSection({
@@ -10,9 +12,20 @@ export default function SimulationSection({
     artifactsError,
     waveform,
     waveformStatus,
-    waveformError,
-    fetchWaveform,
+    waveformError
+
 }) {
+    const [downloadError, setDownloadError] = useState('')
+
+    const handleDownloadArtifact = async (artifactName) => {
+        setDownloadError('')
+        try {
+            await downloadSimulationArtifact(project.name, artifactName)
+        } catch (error) {
+            setDownloadError(error?.message || 'Unable to download simulation artifact.')
+        }
+    }
+
     return (
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 shadow-sm">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -85,6 +98,12 @@ export default function SimulationSection({
                         {simOutput}
                     </pre>
                 </div>
+            )}
+
+            {downloadError && (
+                <p role="alert" className="mt-3 text-sm text-red-400">
+                    {downloadError}
+                </p>
             )}
 
             {/* Artifacts */}
@@ -165,17 +184,13 @@ export default function SimulationSection({
                                         </span>
                                     </div>
 
-                                    <a
-                                        href={`/projects/${project.name}/artifacts/${encodeURIComponent(
-                                            artifact.name
-                                        )}`}
-                                        download={artifact.name}
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDownloadArtifact(artifact.name)}
                                         className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-sm font-medium text-cyan-400 transition-colors hover:bg-cyan-500/20"
                                     >
-                                        {artifact.type === 'waveform'
-                                            ? 'Download VCD'
-                                            : 'Download'}
-                                    </a>
+                                        {artifact.type === 'waveform' ? 'Download VCD' : 'Download'}
+                                    </button>
                                 </div>
                             ))}
                         </div>

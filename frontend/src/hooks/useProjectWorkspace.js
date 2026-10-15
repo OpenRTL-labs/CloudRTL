@@ -28,8 +28,6 @@ export default function useProjectWorkspace(
     useEffect(() => {
         let isMounted = true
 
-        setFilesStatus('loading')
-
         getProjectFiles(projectName)
             .then((data) => {
                 if (!isMounted) return

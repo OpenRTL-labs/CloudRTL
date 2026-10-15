@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react'
 import { createProjectSession } from '../../hooks/useProjectSession'
 import useProjectSession from '../../hooks/useProjectSession'
-import { runSynthesis, getSynthesisArtifacts } from '../../services/projectApi'
+import {
+  runSynthesis,
+  getSynthesisArtifacts,
+  getProjects,
+  downloadSynthesisArtifact,
+} from '../../services/projectApi'
 
 export default function SynthesisPage({
   projectSessions,
@@ -14,17 +19,13 @@ export default function SynthesisPage({
   useEffect(() => {
     let isMounted = true
 
-    fetch('/projects')
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Failed to fetch projects')
-        }
-        return response.json()
-      })
+    getProjects()
       .then((data) => {
         if (!isMounted) return
 
-        const loadedProjects = data.projects || []
+        const loadedProjects = Array.isArray(data)
+          ? data
+          : data?.projects || []
         setProjects(loadedProjects)
         setProjectsStatus('loaded')
 
@@ -167,10 +168,19 @@ function SynthesisProjectCard({ project, session, setSession }) {
     setSynthMetrics,
     synthArtifacts,
     setSynthArtifacts,
-    synthArtifactsStatus,
     setSynthArtifactsStatus,
   } = useProjectSession(session, setSession)
+  const [downloadError, setDownloadError] = useState('')
 
+  const handleDownload = async (artifactName) => {
+    setDownloadError('')
+
+    try {
+      await downloadSynthesisArtifact(project.name, artifactName)
+    } catch (error) {
+      setDownloadError(error.message || 'Artifact download failed.')
+    }
+  }
   const handleRunSynthesis = async () => {
     if (synthStatus === 'running') return
 
@@ -253,12 +263,12 @@ function SynthesisProjectCard({ project, session, setSession }) {
         <div className="flex items-center gap-3">
           <span
             className={`rounded-md border px-2.5 py-1 text-xs font-medium ${synthStatus === 'success'
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                : synthStatus === 'failed'
-                  ? 'border-red-500/30 bg-red-500/10 text-red-400'
-                  : synthStatus === 'running'
-                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
-                    : 'border-slate-700 bg-slate-800 text-slate-400'
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+              : synthStatus === 'failed'
+                ? 'border-red-500/30 bg-red-500/10 text-red-400'
+                : synthStatus === 'running'
+                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                  : 'border-slate-700 bg-slate-800 text-slate-400'
               }`}
           >
             {getStatusLabel()}
@@ -330,16 +340,20 @@ function SynthesisProjectCard({ project, session, setSession }) {
                   {artifact.name}
                 </span>
 
-                <a
-                  href={`/projects/${project.name}/synthesis-artifacts/${artifact.name}`}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  type="button"
+                  onClick={() => handleDownload(artifact.name)}
                   className="text-xs font-medium text-cyan-400 hover:text-cyan-300"
                 >
                   Download
-                </a>
+                </button>
               </div>
             ))}
+            {downloadError && (
+              <p className="mt-3 text-sm text-red-400">
+                {downloadError}
+              </p>
+            )}
           </div>
         </div>
       )}

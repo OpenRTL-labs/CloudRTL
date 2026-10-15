@@ -1,17 +1,24 @@
+from sqlalchemy.orm import descriptor_props
 import re
+import shutil
 import subprocess
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 
-from .auth import router as auth_router
-from .database import test_database_connection
+from .auth import get_current_user, router as auth_router
+from .database import get_db, test_database_connection
+from .models import Project as DBProject, ProjectFile as DBProjectFile, User
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SIMULATOR_DIR = REPO_ROOT / "simulator"
 PHYSICAL_DIR = REPO_ROOT / "physical"
+WORKSPACE_BASE = SIMULATOR_DIR / "workspace"
 
 # ============== VCD WAVEFORM PARSER ==============
 def parse_vcd(vcd_path: Path):
@@ -157,22 +164,106 @@ class ArtifactsResponse(BaseModel):
     project: str
     artifacts: list[ArtifactItem]
 
-projects = [
-    Project(
+def get_project_workspace_dir(user_id: int, project_id: int) -> Path:
+    return WORKSPACE_BASE / str(user_id) / str(project_id)
+
+
+def ensure_project_workspace(user_id: int, project_id: int) -> dict[str, Path]:
+    base = get_project_workspace_dir(user_id, project_id)
+    rtl_dir = base / "rtl"
+    tb_dir = base / "testbench"
+    work_dir = base / "work"
+    artifacts_dir = base / "artifacts"
+
+    rtl_dir.mkdir(parents=True, exist_ok=True)
+    tb_dir.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "base": base,
+        "rtl": rtl_dir,
+        "testbench": tb_dir,
+        "work": work_dir,
+        "artifacts": artifacts_dir,
+    }
+
+
+def resolve_user_project(project_name: str, user: User, db: Session) -> DBProject:
+    project = (
+        db.query(DBProject)
+        .filter(
+            DBProject.user_id == user.id,
+            DBProject.name == project_name,
+        )
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+def ensure_user_default_project(user: User, db: Session) -> DBProject | None:
+    existing = (
+        db.query(DBProject)
+        .filter(
+            DBProject.user_id == user.id,
+            func.lower(DBProject.name) == "counter",
+        )
+        .first()
+    )
+    if existing:
+        return existing
+
+    user_project_count = (
+        db.query(DBProject)
+        .filter(DBProject.user_id == user.id)
+        .count()
+    )
+    if user_project_count > 0:
+        return None
+
+    counter_proj = DBProject(
+        user_id=user.id,
         name="counter",
         type="RTL Design Project",
         technology="Nangate45",
         top_module="counter",
         status="ready",
     )
-]
+    db.add(counter_proj)
+    db.commit()
+    db.refresh(counter_proj)
 
-project_files = {
-    "counter": [
-        ProjectFile(name="counter.v", type="rtl"),
-        ProjectFile(name="counter_tb.v", type="testbench"),
-    ]
-}
+    file_rtl = DBProjectFile(
+        project_id=counter_proj.id,
+        name="counter.v",
+        type="rtl",
+    )
+    file_tb = DBProjectFile(
+        project_id=counter_proj.id,
+        name="counter_tb.v",
+        type="testbench",
+    )
+    db.add_all([file_rtl, file_tb])
+    db.commit()
+
+    dirs = ensure_project_workspace(user.id, counter_proj.id)
+    ref_rtl = SIMULATOR_DIR / "examples" / "counter.v"
+    ref_tb = SIMULATOR_DIR / "tests" / "counter_tb.v"
+
+    if ref_rtl.is_file():
+        (dirs["rtl"] / "counter.v").write_text(
+            ref_rtl.read_text(encoding="utf-8", errors="replace"),
+            encoding="utf-8",
+        )
+    if ref_tb.is_file():
+        (dirs["testbench"] / "counter_tb.v").write_text(
+            ref_tb.read_text(encoding="utf-8", errors="replace"),
+            encoding="utf-8",
+        )
+
+    return counter_proj
 
 
 @app.get("/")
@@ -188,6 +279,7 @@ def root():
 def health_check():
     return {"status": "healthy"}
 
+
 @app.get("/db-health")
 def database_health_check():
     try:
@@ -199,12 +291,42 @@ def database_health_check():
             detail=f"Database connection failed: {str(exc)}",
         )
 
+
 @app.get("/projects")
-def get_projects():
-    return {"projects": projects}
+def get_projects(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    ensure_user_default_project(current_user, db)
+
+    user_projects = (
+        db.query(DBProject)
+        .filter(DBProject.user_id == current_user.id)
+        .order_by(DBProject.created_at.asc())
+        .all()
+    )
+    return {
+        "projects": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "type": p.type,
+                "technology": p.technology,
+                "top_module": p.top_module,
+                "status": p.status,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in user_projects
+        ]
+    }
+
 
 @app.post("/projects", status_code=201)
-def create_project(request: CreateProjectRequest):
+def create_project(
+    request: CreateProjectRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
     name = request.name.strip()
     top_module = request.top_module.strip()
     technology = request.technology.strip()
@@ -222,13 +344,23 @@ def create_project(request: CreateProjectRequest):
             detail="Project name cannot contain path separators ('/' or '\\').",
         )
 
-    if any(p.name.lower() == name.lower() for p in projects):
+    existing_proj = (
+        db.query(DBProject)
+        .filter(
+            DBProject.user_id == current_user.id,
+            func.lower(DBProject.name) == name.lower(),
+        )
+        .first()
+    )
+
+    if existing_proj:
         raise HTTPException(
             status_code=400,
             detail=f"Project with name '{name}' already exists.",
         )
 
-    new_project = Project(
+    new_project = DBProject(
+        user_id=current_user.id,
         name=name,
         type="RTL Design Project",
         technology=technology,
@@ -236,39 +368,81 @@ def create_project(request: CreateProjectRequest):
         status="ready",
     )
 
-    projects.append(new_project)
-    project_files[name] = []
+    db.add(new_project)
+    db.commit()
+    db.refresh(new_project)
 
-    return {"project": new_project}
+    ensure_project_workspace(current_user.id, new_project.id)
+
+    return {
+        "project": {
+            "id": new_project.id,
+            "name": new_project.name,
+            "type": new_project.type,
+            "technology": new_project.technology,
+            "top_module": new_project.top_module,
+            "status": new_project.status,
+            "created_at": new_project.created_at.isoformat() if new_project.created_at else None,
+        }
+    }
+
 
 @app.get("/projects/{project_name}")
-def get_project(project_name: str):
-    for project in projects:
-        if project.name == project_name:
-            return project
+def get_project(
+    project_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    project = resolve_user_project(project_name, current_user, db)
 
-    return {"detail": "Project not found"}
+    return {
+        "id": project.id,
+        "name": project.name,
+        "type": project.type,
+        "technology": project.technology,
+        "top_module": project.top_module,
+        "status": project.status,
+        "created_at": project.created_at.isoformat() if project.created_at else None,
+    }
+
 
 @app.get("/projects/{project_name}/files")
-def get_project_files(project_name: str):
-    for project in projects:
-        if project.name == project_name:
-            return {
-                "project": project.name,
-                "files": project_files.get(project.name, []),
-            }
+def get_project_files(
+    project_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    project = resolve_user_project(project_name, current_user, db)
 
-    raise HTTPException(status_code=404, detail="Project not found")
-
-@app.get("/projects/{project_name}/files/{filename}")
-def get_project_file(project_name: str, filename: str):
-    matched_project = next(
-        (p for p in projects if p.name == project_name),
-        None,
+    files = (
+        db.query(DBProjectFile)
+        .filter(DBProjectFile.project_id == project.id)
+        .order_by(DBProjectFile.name.asc())
+        .all()
     )
 
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    return {
+        "project": project.name,
+        "files": [
+            {
+                "id": f.id,
+                "name": f.name,
+                "type": f.type,
+                "created_at": f.created_at.isoformat() if f.created_at else None,
+            }
+            for f in files
+        ],
+    }
+
+
+@app.get("/projects/{project_name}/files/{filename}")
+def get_project_file(
+    project_name: str,
+    filename: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    project = resolve_user_project(project_name, current_user, db)
 
     if (
         filename != Path(filename).name
@@ -281,11 +455,13 @@ def get_project_file(project_name: str, filename: str):
             detail="Invalid file name: path traversal is not allowed.",
         )
 
-    current_files = project_files.get(matched_project.name, [])
-
-    matched_file = next(
-        (f for f in current_files if f.name.lower() == filename.lower()),
-        None,
+    matched_file = (
+        db.query(DBProjectFile)
+        .filter(
+            DBProjectFile.project_id == project.id,
+            func.lower(DBProjectFile.name) == filename.lower(),
+        )
+        .first()
     )
 
     if not matched_file:
@@ -294,10 +470,21 @@ def get_project_file(project_name: str, filename: str):
             detail=f"File '{filename}' not found in project '{project_name}'.",
         )
 
-    if matched_file.type == "rtl":
-        target_path = SIMULATOR_DIR / "examples" / matched_file.name
-    else:
-        target_path = SIMULATOR_DIR / "tests" / matched_file.name
+    dirs = ensure_project_workspace(current_user.id, project.id)
+    subdir = dirs["rtl"] if matched_file.type == "rtl" else dirs["testbench"]
+    target_path = subdir / matched_file.name
+
+    if not target_path.is_file():
+        legacy_path = (
+            SIMULATOR_DIR / "examples" / matched_file.name
+            if matched_file.type == "rtl"
+            else SIMULATOR_DIR / "tests" / matched_file.name
+        )
+        if legacy_path.is_file():
+            target_path.write_text(
+                legacy_path.read_text(encoding="utf-8", errors="replace"),
+                encoding="utf-8",
+            )
 
     if not target_path.is_file():
         raise HTTPException(
@@ -317,16 +504,25 @@ def get_project_file(project_name: str, filename: str):
         )
 
     return {
-        "project": matched_project.name,
-        "file": matched_file,
+        "project": project.name,
+        "file": {
+            "id": matched_file.id,
+            "name": matched_file.name,
+            "type": matched_file.type,
+            "created_at": matched_file.created_at.isoformat() if matched_file.created_at else None,
+        },
         "content": content,
     }
 
+
 @app.post("/projects/{project_name}/files", status_code=201)
-def add_project_file(project_name: str, request: AddFileRequest):
-    matched_project = next((p for p in projects if p.name == project_name), None)
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
+def add_project_file(
+    project_name: str,
+    request: AddFileRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    project = resolve_user_project(project_name, current_user, db)
 
     filename = request.name.strip()
     if not filename:
@@ -351,33 +547,24 @@ def add_project_file(project_name: str, request: AddFileRequest):
             detail="File must have a .v or .sv extension.",
         )
 
-    current_files = project_files.setdefault(matched_project.name, [])
-    if any(f.name.lower() == filename.lower() for f in current_files):
+    existing_file = (
+        db.query(DBProjectFile)
+        .filter(
+            DBProjectFile.project_id == project.id,
+            func.lower(DBProjectFile.name) == filename.lower(),
+        )
+        .first()
+    )
+
+    if existing_file:
         raise HTTPException(
             status_code=400,
-            detail=f"File '{filename}' already exists in project '{matched_project.name}'.",
+            detail=f"File '{filename}' already exists in project '{project.name}'.",
         )
 
-    if file_type == "rtl":
-        target_dir = SIMULATOR_DIR / "examples"
-    else:
-        target_dir = SIMULATOR_DIR / "tests"
-
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = target_dir / filename
-
-    if target_path.exists():
-        registered_elsewhere = any(
-            any(f.name.lower() == filename.lower() for f in files)
-            for project, files in project_files.items()
-            if project != matched_project.name
-        )
-
-        if registered_elsewhere:
-            raise HTTPException(
-                status_code=400,
-                detail=f"File '{filename}' is already registered to another project.",
-            )
+    dirs = ensure_project_workspace(current_user.id, project.id)
+    subdir = dirs["rtl"] if file_type == "rtl" else dirs["testbench"]
+    target_path = subdir / filename
 
     try:
         target_path.write_text(request.content, encoding="utf-8")
@@ -387,27 +574,35 @@ def add_project_file(project_name: str, request: AddFileRequest):
             detail=f"Failed to write file to disk: {str(exc)}",
         )
 
-    new_file = ProjectFile(name=filename, type=file_type)
-    current_files.append(new_file)
+    new_file = DBProjectFile(
+        project_id=project.id,
+        name=filename,
+        type=file_type,
+    )
+    db.add(new_file)
+    db.commit()
+    db.refresh(new_file)
 
     return {
-        "project": matched_project.name,
-        "file": new_file,
+        "project": project.name,
+        "file": {
+            "id": new_file.id,
+            "name": new_file.name,
+            "type": new_file.type,
+            "created_at": new_file.created_at.isoformat() if new_file.created_at else None,
+        },
     }
+
 
 @app.put("/projects/{project_name}/files/{filename}")
 def update_project_file(
     project_name: str,
     filename: str,
     request: AddFileRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
 ):
-    matched_project = next(
-        (p for p in projects if p.name == project_name),
-        None,
-    )
-
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = resolve_user_project(project_name, current_user, db)
 
     if (
         filename != Path(filename).name
@@ -420,11 +615,13 @@ def update_project_file(
             detail="Invalid file name: path traversal is not allowed.",
         )
 
-    current_files = project_files.get(matched_project.name, [])
-
-    matched_file = next(
-        (f for f in current_files if f.name.lower() == filename.lower()),
-        None,
+    matched_file = (
+        db.query(DBProjectFile)
+        .filter(
+            DBProjectFile.project_id == project.id,
+            func.lower(DBProjectFile.name) == filename.lower(),
+        )
+        .first()
     )
 
     if not matched_file:
@@ -433,16 +630,9 @@ def update_project_file(
             detail=f"File '{filename}' not found in project '{project_name}'.",
         )
 
-    if matched_file.type == "rtl":
-        target_path = SIMULATOR_DIR / "examples" / matched_file.name
-    else:
-        target_path = SIMULATOR_DIR / "tests" / matched_file.name
-
-    if not target_path.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail=f"File '{matched_file.name}' was not found on disk.",
-        )
+    dirs = ensure_project_workspace(current_user.id, project.id)
+    subdir = dirs["rtl"] if matched_file.type == "rtl" else dirs["testbench"]
+    target_path = subdir / matched_file.name
 
     try:
         target_path.write_text(request.content, encoding="utf-8")
@@ -453,45 +643,83 @@ def update_project_file(
         )
 
     return {
-        "project": matched_project.name,
-        "file": matched_file,
+        "project": project.name,
+        "file": {
+            "id": matched_file.id,
+            "name": matched_file.name,
+            "type": matched_file.type,
+            "created_at": matched_file.created_at.isoformat() if matched_file.created_at else None,
+        },
         "message": f"File '{matched_file.name}' updated successfully.",
     }
 
 @app.post("/projects/{project_name}/simulate", response_model=SimulationResponse)
-def simulate_project(project_name: str):
-    matched_project = next((p for p in projects if p.name == project_name), None)
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
+def simulate_project(
+    project_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    matched_project = resolve_user_project(project_name, current_user, db)
+    dirs = ensure_project_workspace(current_user.id, matched_project.id)
 
-    files = project_files.get(matched_project.name, [])
+    files = (
+        db.query(DBProjectFile)
+        .filter(DBProjectFile.project_id == matched_project.id)
+        .all()
+    )
     if not files:
-        raise HTTPException(status_code=400, detail=f"No files configured for project '{project_name}'")
+        raise HTTPException(
+            status_code=400,
+            detail=f"No files configured for project '{project_name}'",
+        )
 
     rtl_args = []
     tb_args = []
 
     for f in files:
         if f.type == "rtl":
-            rel_path = f"examples/{f.name}"
-            host_path = SIMULATOR_DIR / rel_path
+            host_path = dirs["rtl"] / f.name
             if not host_path.is_file():
-                raise HTTPException(status_code=400, detail=f"RTL file '{f.name}' not found at '{rel_path}'")
-            rtl_args.append(rel_path)
+                ref_path = SIMULATOR_DIR / "examples" / f.name
+                if ref_path.is_file():
+                    host_path.write_text(
+                        ref_path.read_text(encoding="utf-8", errors="replace"),
+                        encoding="utf-8",
+                    )
+            if not host_path.is_file():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"RTL file '{f.name}' not found.",
+                )
+            rtl_args.append(f"workspace/{current_user.id}/{matched_project.id}/rtl/{f.name}")
         elif f.type == "testbench":
-            rel_path = f"tests/{f.name}"
-            host_path = SIMULATOR_DIR / rel_path
+            host_path = dirs["testbench"] / f.name
             if not host_path.is_file():
-                raise HTTPException(status_code=400, detail=f"Testbench file '{f.name}' not found at '{rel_path}'")
-            tb_args.append(rel_path)
+                ref_path = SIMULATOR_DIR / "tests" / f.name
+                if ref_path.is_file():
+                    host_path.write_text(
+                        ref_path.read_text(encoding="utf-8", errors="replace"),
+                        encoding="utf-8",
+                    )
+            if not host_path.is_file():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Testbench file '{f.name}' not found.",
+                )
+            tb_args.append(f"workspace/{current_user.id}/{matched_project.id}/testbench/{f.name}")
 
     if not rtl_args:
-        raise HTTPException(status_code=400, detail=f"No RTL files found for project '{project_name}'")
+        raise HTTPException(
+            status_code=400,
+            detail=f"No RTL files found for project '{project_name}'",
+        )
     if not tb_args:
-        raise HTTPException(status_code=400, detail=f"No testbench files found for project '{project_name}'")
+        raise HTTPException(
+            status_code=400,
+            detail=f"No testbench files found for project '{project_name}'",
+        )
 
-    output_vvp = f"work/{matched_project.name}.vvp"
-    (SIMULATOR_DIR / "work").mkdir(parents=True, exist_ok=True)
+    output_vvp = f"workspace/{current_user.id}/{matched_project.id}/work/{matched_project.name}.vvp"
 
     # Step 1: iverilog compilation in Docker
     compile_cmd = [
@@ -536,14 +764,14 @@ def simulate_project(project_name: str):
             output=comp_output.strip() or "RTL compilation failed.",
         )
 
-    # Step 2: vvp execution in Docker
+    # Step 2: vvp execution in Docker with working dir set to project workspace
     sim_cmd = [
         "docker", "run", "--rm",
         "-v", f"{SIMULATOR_DIR}:/workspace",
-        "-w", "/workspace",
+        "-w", f"/workspace/workspace/{current_user.id}/{matched_project.id}",
         "cloudrtl-eda:0.1",
         "vvp",
-        output_vvp,
+        f"work/{matched_project.name}.vvp",
     ]
 
     try:
@@ -578,6 +806,22 @@ def simulate_project(project_name: str):
             output=sim_output.strip() or "Simulation failed.",
         )
 
+    # VVP runs from dirs["base"], so a testbench's $dumpfile()
+    # normally creates its VCD there.
+    for search_dir in (dirs["base"], dirs["work"]):
+        if search_dir.is_dir():
+            for gen_vcd in search_dir.glob("*.vcd"):
+                if gen_vcd.is_file():
+                    shutil.copy2(
+                        gen_vcd,
+                        dirs["artifacts"] / gen_vcd.name,
+                    )
+
+    # Preserve the existing VVP artifact handling.
+    gen_vvp = dirs["work"] / f"{matched_project.name}.vvp"
+    if gen_vvp.is_file():
+        shutil.copy2(gen_vvp, dirs["artifacts"] / gen_vvp.name)
+
     return SimulationResponse(
         project=project_name,
         status="success",
@@ -587,7 +831,7 @@ def simulate_project(project_name: str):
 
 # ============== Synthesis Metrics Parsing ==============
 
-def parse_synthesis_metrics(project_name: str, output: str) -> dict:
+def parse_synthesis_metrics(project_name: str, output: str, work_dir: Path) -> dict:
     metrics = {
         "cell_count": None,
         "area": None,
@@ -606,11 +850,14 @@ def parse_synthesis_metrics(project_name: str, output: str) -> dict:
     if cell_match:
         metrics["cell_count"] = int(cell_match.group(1))
 
-    work_dir = (SIMULATOR_DIR / "work").resolve()
+    work_dir = work_dir.resolve()
 
+    
     # --------- Area ----------
     area_report = work_dir / f"{project_name}_area.rpt"
+    area_match = None
 
+    # First, try the generated area report.
     if area_report.is_file():
         area_text = area_report.read_text(
             encoding="utf-8",
@@ -623,8 +870,17 @@ def parse_synthesis_metrics(project_name: str, output: str) -> dict:
             re.IGNORECASE,
         )
 
-        if area_match:
-            metrics["area"] = float(area_match.group(1))
+    # Fall back to the Yosys synthesis output.
+    if area_match is None:
+        area_match = re.search(
+            r"Chip area for module\s+'.*?':\s*([\d.]+)",
+            output,
+            re.IGNORECASE,
+        )
+
+    if area_match:
+        metrics["area"] = float(area_match.group(1))
+
 
     # --------- Timing ----------
     timing_report = work_dir / f"{project_name}_timing.rpt"
@@ -684,24 +940,26 @@ def parse_synthesis_metrics(project_name: str, output: str) -> dict:
 # ==================== SYNTHESIS WORKFLOW ====================
 
 @app.post("/projects/{project_name}/synthesize")
-def synthesize_project(project_name: str):
+def synthesize_project(
+    project_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    matched_project = resolve_user_project(project_name, current_user, db)
+    dirs = ensure_project_workspace(current_user.id, matched_project.id)
 
-    matched_project = next(
-        (p for p in projects if p.name == project_name),
-        None,
-    )
-
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    work_dir = (SIMULATOR_DIR / "work").resolve()
+    work_dir = dirs["work"].resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # --------------------------------------------------------
     # Step 1: Prepare project-specific Yosys synthesis script
     # --------------------------------------------------------
 
-    files = project_files.get(matched_project.name, [])
+    files = (
+        db.query(DBProjectFile)
+        .filter(DBProjectFile.project_id == matched_project.id)
+        .all()
+    )
     rtl_files = [f for f in files if f.type == "rtl"]
 
     if not rtl_files:
@@ -711,13 +969,20 @@ def synthesize_project(project_name: str):
         )
 
     for f in rtl_files:
-        rtl_path = SIMULATOR_DIR / "examples" / f.name
-
+        rtl_path = dirs["rtl"] / f.name
+        if not rtl_path.is_file():
+            ref_path = SIMULATOR_DIR / "examples" / f.name
+            if ref_path.is_file():
+                rtl_path.write_text(
+                    ref_path.read_text(encoding="utf-8", errors="replace"),
+                    encoding="utf-8",
+                )
         if not rtl_path.is_file():
             raise HTTPException(
                 status_code=400,
-                detail=f"RTL file '{f.name}' not found in simulator/examples.",
+                detail=f"RTL file '{f.name}' not found.",
             )
+
 
     synthesis_template_path = SIMULATOR_DIR / "scripts" / "synthesize.ys"
 
@@ -733,8 +998,8 @@ def synthesize_project(project_name: str):
     )
 
     rtl_commands = "\n".join(
-        f'read_verilog "/CloudRTL/git/simulator/examples/{f.name}"'
-        for f in rtl_files
+    f'read_verilog "/CloudRTL/git/simulator/workspace/{current_user.id}/{matched_project.id}/rtl/{f.name}"'
+    for f in rtl_files
     )
 
     synthesis_script = synthesis_script.replace(
@@ -749,16 +1014,28 @@ def synthesize_project(project_name: str):
         1,
     )
 
+    # Use a single-line command to avoid line-continuation issues when
+    # the generated script is read by Yosys inside the Linux EDA container.
+    new_write_command = (
+        "write_verilog -noattr -noexpr "
+        f"/CloudRTL/git/simulator/workspace/"
+        f"{current_user.id}/{matched_project.id}/work/"
+        f"{project_name}_netlist.v"
+    )
+    old_write_block = """write_verilog \\
+    -noattr \\
+    -noexpr \\
+    /CloudRTL/git/simulator/work/counter_netlist.v"""
+
+    if old_write_block not in synthesis_script:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not locate the expected write_verilog command in synthesize.ys.",
+        )
+
     synthesis_script = synthesis_script.replace(
-        """write_verilog \\
-    -noattr \\
-    -noexpr \\
-    /CloudRTL/git/simulator/work/counter_netlist.v""",
-        """write_verilog \\
-    -noattr \\
-    -noexpr \\
-    /CloudRTL/git/simulator/work/"""
-        + f"{project_name}_netlist.v",
+        old_write_block,
+        new_write_command,
         1,
     )
 
@@ -768,6 +1045,7 @@ def synthesize_project(project_name: str):
         project_synthesis_script.write_text(
             synthesis_script,
             encoding="utf-8",
+            newline="\n",
         )
     except Exception as exc:
         raise HTTPException(
@@ -794,7 +1072,7 @@ def synthesize_project(project_name: str):
                 "cloudrtl-eda:0.2",
                 "yosys",
                 "-s",
-                f"/CloudRTL/git/simulator/work/{project_name}_synthesize.ys",
+               f"/CloudRTL/git/simulator/workspace/{current_user.id}/{matched_project.id}/work/{project_name}_synthesize.ys",
             ],
             capture_output=True,
             text=True,
@@ -869,7 +1147,20 @@ def synthesize_project(project_name: str):
         errors="replace",
     )
 
-    # Replace project-specific counter references in the template.
+    
+    # Prepare project-specific OpenROAD analysis paths.
+    workspace_container = (
+        f"/CloudRTL/git/simulator/workspace/"
+        f"{current_user.id}/{matched_project.id}/work"
+    )
+
+    # Replace the shared workspace prefix FIRST so paths do not get duplicated.
+    analysis_script = analysis_script.replace(
+        "/CloudRTL/git/simulator/work/",
+        f"{workspace_container}/",
+    )
+
+    # Adapt the template to the selected project.
     analysis_script = analysis_script.replace(
         "counter_netlist.v",
         f"{project_name}_netlist.v",
@@ -895,6 +1186,7 @@ def synthesize_project(project_name: str):
         f"{project_name}_power.rpt",
     )
 
+
     project_analysis_script = work_dir / f"{project_name}_analysis.tcl"
 
     try:
@@ -917,7 +1209,7 @@ def synthesize_project(project_name: str):
         "exec",
         "openroad-work",
         "/CloudRTL/tools/OpenROAD-flow-scripts/tools/OpenROAD/build/bin/openroad",
-        f"/CloudRTL/git/simulator/work/{project_name}_analysis.tcl",
+        f"/CloudRTL/git/simulator/workspace/{current_user.id}/{matched_project.id}/work/{project_name}_analysis.tcl",
     ]
 
     try:
@@ -960,7 +1252,7 @@ def synthesize_project(project_name: str):
         }
 
     # --------------------------------------------------------
-    # Step 6: Collect synthesis artifacts
+    # Step 7: Collect synthesis artifacts and store in project workspace
     # --------------------------------------------------------
 
     expected_artifacts = [
@@ -978,12 +1270,14 @@ def synthesize_project(project_name: str):
 
         if artifact_path.is_file():
             artifacts.append(artifact_name)
+            shutil.copy2(artifact_path, dirs["artifacts"] / artifact_name)
 
     # ========== Parse Synthesis Metrics ==========
 
     metrics = parse_synthesis_metrics(
         project_name,
         combined_output,
+        work_dir,
     )
 
     return {
@@ -993,7 +1287,8 @@ def synthesize_project(project_name: str):
         "metrics": metrics,
         "output": combined_output,
         "artifacts": artifacts,
-}
+    }
+
 
 # =================== Physical Design Metrics Parsing ===========================
 
@@ -1099,25 +1394,46 @@ def parse_physical_metrics(output: str) -> dict:
 # ============ PHYSICAL DESIGN API ============
 
 @app.post("/projects/{project_name}/physical-design")
-def run_physical_design(project_name: str):
+def run_physical_design(
+    project_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    matched_project = resolve_user_project(project_name, current_user, db)
+    dirs = ensure_project_workspace(current_user.id, matched_project.id)
 
-    # Validate project
-    matched_project = next(
-        (p for p in projects if p.name == project_name),
-        None,
-    )
-
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    # Check synthesized netlist
-    netlist_path = (SIMULATOR_DIR / "work" / f"{project_name}_netlist.v").resolve()
+    # Check synthesized netlist in project artifacts or simulator/work
+    netlist_path = dirs["artifacts"] / f"{project_name}_netlist.v"
+    if not netlist_path.is_file():
+        netlist_path = (SIMULATOR_DIR / "work" / f"{project_name}_netlist.v").resolve()
 
     if not netlist_path.is_file():
         raise HTTPException(
             status_code=404,
             detail="Synthesized netlist not found. Run synthesis first.",
         )
+
+    
+    # Stage the selected project's synthesized netlist in its own workspace.
+    project_netlist = dirs["work"] / f"{matched_project.name}_netlist.v"
+
+    if netlist_path.resolve() != project_netlist.resolve():
+        shutil.copy2(netlist_path, project_netlist)
+
+    # OpenROAD container sees the same workspace under /CloudRTL/git.
+    container_work_dir = (
+        f"/CloudRTL/git/simulator/workspace/"
+        f"{current_user.id}/{matched_project.id}/work"
+    )
+
+    container_netlist_path = (
+        f"{container_work_dir}/{matched_project.name}_netlist.v"
+    )
+
+    physical_work_dir = dirs["work"] / "physical"
+    physical_work_dir.mkdir(parents=True, exist_ok=True)
+
+    container_output_dir = f"{container_work_dir}/physical"
 
     # Check OpenROAD container status
     try:
@@ -1155,12 +1471,21 @@ def run_physical_design(project_name: str):
         )
 
     # Run OpenROAD physical-design flow
+    
     openroad_command = [
         "docker",
         "exec",
+        "-e",
+        f"CLOUDRTL_PROJECT_NAME={matched_project.name}",
+        "-e",
+        f"CLOUDRTL_TOP_MODULE={matched_project.top_module}",
+        "-e",
+        f"CLOUDRTL_NETLIST={container_netlist_path}",
+        "-e",
+        f"CLOUDRTL_OUTPUT_DIR={container_output_dir}",
         "openroad-work",
         "/CloudRTL/tools/OpenROAD-flow-scripts/tools/OpenROAD/build/bin/openroad",
-        f"/CloudRTL/git/physical/scripts/run_openroad.tcl",
+        "/CloudRTL/git/physical/scripts/run_openroad.tcl",
     ]
 
     try:
@@ -1191,8 +1516,6 @@ def run_physical_design(project_name: str):
             "artifacts": [],
         }
 
-    physical_work_dir = (PHYSICAL_DIR / "work").resolve()
-
     artifacts = []
 
     expected_artifacts = [
@@ -1207,6 +1530,7 @@ def run_physical_design(project_name: str):
 
         if artifact_path.is_file():
             artifacts.append(artifact_name)
+            shutil.copy2(artifact_path, dirs["artifacts"] / artifact_name)
 
     # ========== Parse Physical Design Metrics ==========
 
@@ -1219,26 +1543,17 @@ def run_physical_design(project_name: str):
         "artifacts": artifacts,
     }
 
+
 # ============ PHYSICAL ARTIFACTS API ============
 
 @app.get("/projects/{project_name}/physical-artifacts")
-def get_physical_artifacts(project_name: str):
-
-    matched_project = next(
-        (p for p in projects if p.name == project_name),
-        None,
-    )
-
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    work_dir = (PHYSICAL_DIR / "work").resolve()
-
-    if not work_dir.is_dir():
-        return {
-            "project": project_name,
-            "artifacts": [],
-        }
+def get_physical_artifacts(
+    project_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    matched_project = resolve_user_project(project_name, current_user, db)
+    dirs = ensure_project_workspace(current_user.id, matched_project.id)
 
     expected_artifacts = [
         f"{project_name}_placed.def",
@@ -1250,7 +1565,9 @@ def get_physical_artifacts(project_name: str):
     artifacts = []
 
     for artifact_name in expected_artifacts:
-        artifact_path = work_dir / artifact_name
+        artifact_path = dirs["artifacts"] / artifact_name
+        if not artifact_path.is_file():
+            artifact_path = (PHYSICAL_DIR / "work" / artifact_name).resolve()
 
         if artifact_path.is_file():
             artifacts.append(
@@ -1271,16 +1588,16 @@ def get_physical_artifacts(project_name: str):
         "artifacts": artifacts,
     }
 
+
 @app.get("/projects/{project_name}/physical-artifacts/{artifact_name}")
-def get_physical_artifact(project_name: str, artifact_name: str):
-
-    matched_project = next(
-        (p for p in projects if p.name == project_name),
-        None,
-    )
-
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
+def get_physical_artifact(
+    project_name: str,
+    artifact_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    matched_project = resolve_user_project(project_name, current_user, db)
+    dirs = ensure_project_workspace(current_user.id, matched_project.id)
 
     # Prevent path traversal
     if (
@@ -1306,17 +1623,9 @@ def get_physical_artifact(project_name: str, artifact_name: str):
             detail="Physical artifact not found",
         )
 
-    work_dir = (PHYSICAL_DIR / "work").resolve()
-    target_path = (work_dir / artifact_name).resolve()
-
-    # Ensure target remains inside physical/work
-    try:
-        target_path.relative_to(work_dir)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid physical artifact path",
-        )
+    target_path = dirs["artifacts"] / artifact_name
+    if not target_path.is_file():
+        target_path = (PHYSICAL_DIR / "work" / artifact_name).resolve()
 
     if not target_path.is_file():
         raise HTTPException(
@@ -1330,26 +1639,17 @@ def get_physical_artifact(project_name: str, artifact_name: str):
         media_type="application/octet-stream",
     )
 
+
 # ============ SYNTHESIS ARTIFACTS API ============
 
 @app.get("/projects/{project_name}/synthesis-artifacts")
-def get_synthesis_artifacts(project_name: str):
-
-    matched_project = next(
-        (p for p in projects if p.name == project_name),
-        None,
-    )
-
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    work_dir = (SIMULATOR_DIR / "work").resolve()
-
-    if not work_dir.is_dir():
-        return {
-            "project": project_name,
-            "artifacts": [],
-        }
+def get_synthesis_artifacts(
+    project_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    matched_project = resolve_user_project(project_name, current_user, db)
+    dirs = ensure_project_workspace(current_user.id, matched_project.id)
 
     expected_artifacts = [
         f"{project_name}_netlist.v",
@@ -1362,7 +1662,9 @@ def get_synthesis_artifacts(project_name: str):
     artifacts = []
 
     for artifact_name in expected_artifacts:
-        artifact_path = work_dir / artifact_name
+        artifact_path = dirs["artifacts"] / artifact_name
+        if not artifact_path.is_file():
+            artifact_path = (SIMULATOR_DIR / "work" / artifact_name).resolve()
 
         if artifact_path.is_file():
             if artifact_name.endswith(".v"):
@@ -1386,15 +1688,14 @@ def get_synthesis_artifacts(project_name: str):
 
 
 @app.get("/projects/{project_name}/synthesis-artifacts/{artifact_name}")
-def get_synthesis_artifact(project_name: str, artifact_name: str):
-
-    matched_project = next(
-        (p for p in projects if p.name == project_name),
-        None,
-    )
-
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
+def get_synthesis_artifact(
+    project_name: str,
+    artifact_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    matched_project = resolve_user_project(project_name, current_user, db)
+    dirs = ensure_project_workspace(current_user.id, matched_project.id)
 
     # Prevent path traversal
     if (
@@ -1422,17 +1723,9 @@ def get_synthesis_artifact(project_name: str, artifact_name: str):
             detail="Synthesis artifact not found",
         )
 
-    work_dir = (SIMULATOR_DIR / "work").resolve()
-    target_path = (work_dir / artifact_name).resolve()
-
-    # Ensure target remains inside simulator/work
-    try:
-        target_path.relative_to(work_dir)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid synthesis artifact path",
-        )
+    target_path = dirs["artifacts"] / artifact_name
+    if not target_path.is_file():
+        target_path = (SIMULATOR_DIR / "work" / artifact_name).resolve()
 
     if not target_path.is_file():
         raise HTTPException(
@@ -1446,48 +1739,53 @@ def get_synthesis_artifact(project_name: str, artifact_name: str):
         media_type="application/octet-stream",
     )
 
+
 @app.get("/projects/{project_name}/artifacts", response_model=ArtifactsResponse)
-def get_project_artifacts(project_name: str):
+def get_project_artifacts(
+    project_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    matched_project = resolve_user_project(project_name, current_user, db)
+    dirs = ensure_project_workspace(current_user.id, matched_project.id)
 
-    matched_project = next(
-        (p for p in projects if p.name == project_name),
-        None,
-    )
-
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    work_dir = (SIMULATOR_DIR / "work").resolve()
     artifacts: list[ArtifactItem] = []
+    prefix = matched_project.name
 
-    if work_dir.is_dir():
-        prefix = matched_project.name
+    search_dirs = [dirs["artifacts"], dirs["work"], dirs["base"], (SIMULATOR_DIR / "work").resolve()]
 
-        for f in sorted(work_dir.iterdir()):
-            if not f.is_file():
-                continue
+    for s_dir in search_dirs:
+        if s_dir.is_dir():
+            for f in sorted(s_dir.iterdir()):
+                if not f.is_file():
+                    continue
 
-            if not (
-                f.name.startswith(f"{prefix}.")
-                or f.name.startswith(f"{prefix}_")
-            ):
-                continue
-
-            if f.suffix == ".vcd":
-                artifacts.append(
-                    ArtifactItem(
-                        name=f.name,
-                        type="waveform",
-                    )
+                is_project_vcd = (
+                    f.suffix.lower() == ".vcd"
+                    and s_dir in (dirs["artifacts"], dirs["work"], dirs["base"])
                 )
 
-            elif f.suffix == ".vvp":
-                artifacts.append(
-                    ArtifactItem(
-                        name=f.name,
-                        type="simulation",
+                if not (
+                    f.name.startswith(f"{prefix}.")
+                    or f.name.startswith(f"{prefix}_")
+                    or is_project_vcd
+                ):
+                    continue
+
+                if f.suffix == ".vcd" and not any(a.name == f.name for a in artifacts):
+                    artifacts.append(
+                        ArtifactItem(
+                            name=f.name,
+                            type="waveform",
+                        )
                     )
-                )
+                elif f.suffix == ".vvp" and not any(a.name == f.name for a in artifacts):
+                    artifacts.append(
+                        ArtifactItem(
+                            name=f.name,
+                            type="simulation",
+                        )
+                    )
 
     artifacts.sort(
         key=lambda a: (
@@ -1503,10 +1801,14 @@ def get_project_artifacts(project_name: str):
 
 
 @app.get("/projects/{project_name}/artifacts/{artifact_name}")
-def get_project_artifact(project_name: str, artifact_name: str):
-    matched_project = next((p for p in projects if p.name == project_name), None)
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
+def get_project_artifact(
+    project_name: str,
+    artifact_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    matched_project = resolve_user_project(project_name, current_user, db)
+    dirs = ensure_project_workspace(current_user.id, matched_project.id)
 
     # Prevent path traversal and arbitrary filesystem access
     if (
@@ -1517,20 +1819,27 @@ def get_project_artifact(project_name: str, artifact_name: str):
     ):
         raise HTTPException(status_code=400, detail="Invalid artifact name: path traversal is not allowed")
 
-    # Only allow artifacts that belong to this project
-    prefix = f"{matched_project.name}"
-    if not (artifact_name.startswith(f"{prefix}.") or artifact_name.startswith(f"{prefix}_")):
-        raise HTTPException(status_code=404, detail="Artifact not found for this project")
+    # Only allow project-named artifacts, or VCD files
+    # located in this project's own workspace.
+    prefix = matched_project.name
+    is_project_named = (
+        artifact_name.startswith(f"{prefix}.")
+        or artifact_name.startswith(f"{prefix}_")
+    )
 
-    work_dir = (SIMULATOR_DIR / "work").resolve()
-    target_path = (work_dir / artifact_name).resolve()
+    if not is_project_named and Path(artifact_name).suffix.lower() != ".vcd":
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact not found for this project",
+        )
 
-    # Verify target path is strictly within work_dir
-    try:
-        target_path.relative_to(work_dir)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid artifact path")
+    target_path = dirs["artifacts"] / artifact_name
+    if not target_path.is_file():
+        target_path = dirs["work"] / artifact_name
 
+    # Keep the shared-work fallback only for project-named artifacts.
+    if not target_path.is_file() and is_project_named:
+        target_path = (SIMULATOR_DIR / "work" / artifact_name).resolve()
     if not target_path.is_file():
         raise HTTPException(status_code=404, detail="Artifact not found")
 
@@ -1540,20 +1849,33 @@ def get_project_artifact(project_name: str, artifact_name: str):
         media_type="application/octet-stream",
     )
 
+
 # ============== WAVEFORM API ==============
 
 @app.get("/projects/{project_name}/waveform")
-def get_project_waveform(project_name: str):
-    matched_project = next(
-        (p for p in projects if p.name == project_name),
-        None,
-    )
+def get_project_waveform(
+    project_name: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    matched_project = resolve_user_project(project_name, current_user, db)
+    dirs = ensure_project_workspace(current_user.id, matched_project.id)
 
-    if not matched_project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Prefer the conventional project-named VCD.
+    vcd_path = dirs["artifacts"] / f"{matched_project.name}.vcd"
 
-    work_dir = (SIMULATOR_DIR / "work").resolve()
-    vcd_path = work_dir / f"{matched_project.name}.vcd"
+    if not vcd_path.is_file():
+        vcd_path = dirs["work"] / f"{matched_project.name}.vcd"
+
+    # If the testbench uses another filename, search this project's
+    # artifact and work directories only.
+    if not vcd_path.is_file():
+        for search_dir in (dirs["artifacts"], dirs["work"], dirs["base"]):
+            if search_dir.is_dir():
+                candidates = sorted(search_dir.glob("*.vcd"))
+                if candidates:
+                    vcd_path = candidates[0]
+                    break
 
     if not vcd_path.is_file():
         raise HTTPException(

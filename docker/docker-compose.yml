@@ -17,5 +17,14 @@ services:
       timeout: 5s
       retries: 5
 
+  openroad:
+    image: openroad/flow-ubuntu22.04-builder:aeae7d
+    container_name: openroad-work
+    restart: unless-stopped
+    working_dir: /CloudRTL
+    command: ["bash", "-lc", "while true; do sleep 3600; done"]
+    volumes:
+      - /c/CloudRTL:/CloudRTL
+
 volumes:
   cloudrtl_postgres_data:

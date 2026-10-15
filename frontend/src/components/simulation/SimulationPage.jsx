@@ -5,6 +5,7 @@ import {
   runSimulation,
   getSimulationArtifacts,
   getWaveform,
+  downloadSimulationArtifact,
 } from '../../services/projectApi'
 
 const fallbackProject = {
@@ -16,7 +17,17 @@ const fallbackProject = {
 export default function SimulationPage({ project, session, setSession, onAddNewDesign }) {
   const currentProject = project || fallbackProject
   const projects = [currentProject]
+  const [downloadError, setDownloadError] = useState('')
 
+  const handleDownloadArtifact = async (projectName, artifactName) => {
+    setDownloadError('')
+
+    try {
+      await downloadSimulationArtifact(projectName, artifactName)
+    } catch (error) {
+      setDownloadError(error.message || 'Artifact download failed.')
+    }
+  }
   const {
     simStatus,
     setSimStatus,
@@ -24,11 +35,11 @@ export default function SimulationPage({ project, session, setSession, onAddNewD
     setSimOutput,
     waveform,
     setWaveform,
-    waveformStatus,
+
     setWaveformStatus,
     artifacts,
     setArtifacts,
-    artifactsStatus,
+
     setArtifactsStatus
   } = useProjectSession(session, setSession)
 
@@ -222,16 +233,24 @@ export default function SimulationPage({ project, session, setSession, onAddNewD
                             {artifact.name}
                           </span>
 
-                          <a
-                            href={`/projects/${project.name}/artifacts/${artifact.name}`}
-                            target="_blank"
-                            rel="noreferrer"
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDownloadArtifact(project.name, artifact.name)
+                            }
                             className="text-xs font-medium text-cyan-400 hover:text-cyan-300"
                           >
                             Download
-                          </a>
+                          </button>
+
                         </div>
                       ))}
+                      {downloadError && (
+                        <p className="mt-3 text-sm text-red-400">
+                          {downloadError}
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}

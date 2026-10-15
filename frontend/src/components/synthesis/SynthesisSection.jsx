@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { downloadSynthesisArtifact } from '../../services/projectApi'
 export default function SynthesisSection({
     project,
     synthStatus,
@@ -7,6 +9,17 @@ export default function SynthesisSection({
     synthArtifacts,
     synthArtifactsStatus,
 }) {
+    const [downloadError, setDownloadError] = useState('')
+
+    const handleDownloadArtifact = async (artifactName) => {
+        setDownloadError('')
+        try {
+            await downloadSynthesisArtifact(project.name, artifactName)
+        } catch (error) {
+            setDownloadError(error?.message || 'Unable to download synthesis artifact.')
+        }
+    }
+
     return (
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -139,6 +152,12 @@ export default function SynthesisSection({
                 </div>
             )}
 
+            {downloadError && (
+                <p role="alert" className="mt-3 text-sm text-red-400">
+                    {downloadError}
+                </p>
+            )}
+
             {/* Synthesis Artifacts */}
             <div className="mt-6 border-t border-slate-800 pt-6">
                 <div>
@@ -190,15 +209,13 @@ export default function SynthesisSection({
                                         </span>
                                     </div>
 
-                                    <a
-                                        href={`/projects/${project.name}/synthesis-artifacts/${encodeURIComponent(
-                                            artifact.name
-                                        )}`}
-                                        download={artifact.name}
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDownloadArtifact(artifact.name)}
                                         className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-sm font-medium text-cyan-400 transition-colors hover:bg-cyan-500/20"
                                     >
                                         Download
-                                    </a>
+                                    </button>
                                 </div>
                             ))}
                         </div>

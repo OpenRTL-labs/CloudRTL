@@ -20,18 +20,23 @@ read_lef /OpenROAD-flow-scripts/flow/platforms/nangate45/lef/NangateOpenCellLibr
 read_liberty /OpenROAD-flow-scripts/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
 
 
-# ============================================================
-# 3. LOAD SYNTHESIZED NETLIST
-# ============================================================
+# Project-specific settings supplied by the backend
+set project_name $env(CLOUDRTL_PROJECT_NAME)
+set top_module   $env(CLOUDRTL_TOP_MODULE)
+set netlist_path $env(CLOUDRTL_NETLIST)
+set output_dir   $env(CLOUDRTL_OUTPUT_DIR)
 
-read_verilog /CloudRTL/git/simulator/work/counter_netlist.v
+file mkdir $output_dir
+
+puts "CloudRTL project: $project_name"
+puts "Top module: $top_module"
+puts "Netlist: $netlist_path"
+puts "Output directory: $output_dir"
+
+read_verilog $netlist_path
+link_design $top_module
 
 
-# ============================================================
-# 4. LINK TOP-LEVEL DESIGN
-# ============================================================
-
-link_design counter
 
 
 # ============================================================
@@ -125,7 +130,7 @@ puts "============================================================"
 puts "WRITING PLACED DESIGN"
 puts "============================================================"
 
-write_def /CloudRTL/git/physical/work/counter_placed.def
+write_def [file join $output_dir "${project_name}_placed.def"]
 
 
 # ============================================================
@@ -137,7 +142,7 @@ puts "PHYSICAL DESIGN STAGE COMPLETE"
 puts "============================================================"
 
 puts "Placed DEF:"
-puts "/CloudRTL/git/physical/work/counter_placed.def"
+puts [file join $output_dir "${project_name}_placed.def"]
 
 # ============================================================
 # 14. GLOBAL ROUTING
@@ -148,8 +153,8 @@ puts "GLOBAL ROUTING"
 puts "============================================================"
 
 global_route \
-    -guide_file /CloudRTL/git/physical/work/counter.route.guide \
-    -congestion_report_file /CloudRTL/git/physical/work/counter_congestion.rpt
+    -guide_file [file join $output_dir "${project_name}.route.guide"] \
+    -congestion_report_file [file join $output_dir "${project_name}_congestion.rpt"]
 
 # ============================================================
 # 15. DETAILED ROUTING
@@ -160,7 +165,7 @@ puts "DETAILED ROUTING"
 puts "============================================================"
 
 detailed_route \
-    -output_drc /CloudRTL/git/physical/work/counter_route_drc.rpt
+    -output_drc [file join $output_dir "${project_name}_route_drc.rpt"]
 
 # ============================================================
 # 16. ROUTING REPORT
@@ -183,7 +188,7 @@ puts "============================================================"
 puts "WRITING ROUTED DESIGN"
 puts "============================================================"
 
-write_def /CloudRTL/git/physical/work/counter_routed.def
+write_def [file join $output_dir "${project_name}_routed.def"]
 
 puts "============================================================"
 puts "ROUTING STAGE COMPLETE"
@@ -197,7 +202,14 @@ puts "============================================================"
 puts "TIMING CONSTRAINTS"
 puts "============================================================"
 
-create_clock -name clk -period 10 [get_ports clk]
+set clk_port [get_ports -quiet clk]
+
+if {[llength $clk_port] > 0} {
+    create_clock -name clk -period 10 $clk_port
+    puts "Clock constraint applied to clk."
+} else {
+    puts "No clk port found; skipping clock constraint."
+}
 
 # ============================================================
 # 19. POST-ROUTE TIMING ANALYSIS
@@ -261,18 +273,13 @@ puts ""
 puts "FINAL OUTPUT"
 puts "------------------------------------------------------------"
 puts "Placed DEF:"
-puts "/CloudRTL/git/physical/work/counter_placed.def"
+puts [file join $output_dir "${project_name}_placed.def"]
 puts ""
 puts "Routed DEF:"
-puts "/CloudRTL/git/physical/work/counter_routed.def"
+puts [file join $output_dir "${project_name}_routed.def"]
 puts ""
 puts "Routing Guide:"
-puts "/CloudRTL/git/physical/work/counter.route.guide"
+puts [file join $output_dir "${project_name}.route.guide"]
 puts ""
 puts "Routing DRC Report:"
-puts "/CloudRTL/git/physical/work/counter_route_drc.rpt"
-
-puts ""
-puts "============================================================"
-puts "CLOUDRTL PHYSICAL DESIGN FLOW COMPLETE"
-puts "============================================================"
+puts [file join $output_dir "${project_name}_route_drc.rpt"]

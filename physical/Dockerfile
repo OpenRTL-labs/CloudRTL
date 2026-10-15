@@ -35,12 +35,20 @@ RUN apt-get update && \
         libxext-dev \
         zlib1g-dev \
         swig \
-        magic \
         netgen-lvs \
         && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+    # Build Magic from source for SKY130 compatibility
+RUN git clone --depth 1 https://github.com/RTimothyEdwards/magic.git /tmp/magic && \
+    cd /tmp/magic && \
+    ./configure && \
+    make -j"$(nproc)" && \
+    make install && \
+    ldconfig && \
+    rm -rf /tmp/magic
+    
 RUN python3 -m pip install --break-system-packages --no-cache-dir ciel
 
 ENV PATH="/root/.local/bin:${PATH}"

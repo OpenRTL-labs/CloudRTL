@@ -1,5 +1,98 @@
+const AUTH_TOKEN_KEY = 'cloudrtl_access_token'
+
+export function getAuthToken() {
+    return localStorage.getItem(AUTH_TOKEN_KEY)
+}
+
+export function setAuthToken(token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token)
+}
+
+export function clearAuthToken() {
+    localStorage.removeItem(AUTH_TOKEN_KEY)
+}
+
+async function apiFetch(url, options = {}) {
+    const token = getAuthToken()
+
+    const headers = new Headers(options.headers || {})
+
+    if (token) {
+        headers.set('Authorization', `Bearer ${token}`)
+    }
+
+    const response = await fetch(url, {
+        ...options,
+        headers,
+    })
+
+    if (response.status === 401) {
+        clearAuthToken()
+        window.dispatchEvent(new Event('cloudrtl-auth-expired'))
+    }
+
+    return response
+}
+
+export async function login(username, password) {
+    const response = await apiFetch('/auth/login', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            username,
+            password,
+        }),
+    })
+
+    const data = await response.json().catch(() => null)
+
+    if (!response.ok) {
+        throw new Error(
+            data?.detail || `Login failed (${response.status})`
+        )
+    }
+
+    setAuthToken(data.access_token)
+
+    return data
+}
+
+export async function getCurrentUser() {
+    const response = await apiFetch('/auth/me')
+
+    const data = await response.json().catch(() => null)
+
+    if (!response.ok) {
+        throw new Error(
+            data?.detail || `Authentication check failed (${response.status})`
+        )
+    }
+
+    return data
+}
+
+export function logout() {
+    clearAuthToken()
+}
+
+export async function getProjects() {
+    const response = await apiFetch('/projects')
+
+    const data = await response.json().catch(() => null)
+
+    if (!response.ok) {
+        throw new Error(
+            data?.detail || `Failed to fetch projects (${response.status})`
+        )
+    }
+
+    return data
+}
+
 export async function getProjectFiles(projectName) {
-    const response = await fetch(`/projects/${projectName}/files`)
+    const response = await apiFetch(`/projects/${projectName}/files`)
 
     if (!response.ok) {
         throw new Error('Failed to fetch project files')
@@ -15,7 +108,7 @@ export async function getProjectFiles(projectName) {
 }
 
 export async function getProjectFile(projectName, filename) {
-    const response = await fetch(
+    const response = await apiFetch(
         `/projects/${encodeURIComponent(projectName)}/files/${encodeURIComponent(filename)}`
     )
 
@@ -32,7 +125,7 @@ export async function getProjectFile(projectName, filename) {
 }
 
 export async function runSimulation(projectName) {
-    const response = await fetch(`/projects/${projectName}/simulate`, {
+    const response = await apiFetch(`/projects/${projectName}/simulate`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -52,7 +145,7 @@ export async function runSimulation(projectName) {
 }
 
 export async function getSimulationArtifacts(projectName) {
-    const response = await fetch(`/projects/${projectName}/artifacts`)
+    const response = await apiFetch(`/projects/${projectName}/artifacts`)
 
     if (!response.ok) {
         throw new Error('Failed to fetch simulation artifacts')
@@ -62,7 +155,7 @@ export async function getSimulationArtifacts(projectName) {
 }
 
 export async function getWaveform(projectName) {
-    const response = await fetch(`/projects/${projectName}/waveform`)
+    const response = await apiFetch(`/projects/${projectName}/waveform`)
 
     if (!response.ok) {
         throw new Error('Failed to fetch waveform data')
@@ -72,7 +165,7 @@ export async function getWaveform(projectName) {
 }
 
 export async function runSynthesis(projectName) {
-    const response = await fetch(`/projects/${projectName}/synthesize`, {
+    const response = await apiFetch(`/projects/${projectName}/synthesize`, {
         method: 'POST',
     })
 
@@ -84,7 +177,7 @@ export async function runSynthesis(projectName) {
 }
 
 export async function getSynthesisArtifacts(projectName) {
-    const response = await fetch(
+    const response = await apiFetch(
         `/projects/${projectName}/synthesis-artifacts`
     )
 
@@ -98,7 +191,7 @@ export async function getSynthesisArtifacts(projectName) {
 }
 
 export async function runPhysicalDesign(projectName) {
-    const response = await fetch(
+    const response = await apiFetch(
         `/projects/${projectName}/physical-design`,
         {
             method: 'POST',
@@ -117,8 +210,52 @@ export async function runPhysicalDesign(projectName) {
     return response.json()
 }
 
+async function downloadAuthenticatedFile(url, filename) {
+    const response = await apiFetch(url)
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => null)
+        throw new Error(
+            error?.detail || `Download failed (${response.status})`
+        )
+    }
+
+    const blob = await response.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+
+    link.href = objectUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+}
+
+export function downloadSimulationArtifact(projectName, artifactName) {
+    return downloadAuthenticatedFile(
+        `/projects/${encodeURIComponent(projectName)}/artifacts/${encodeURIComponent(artifactName)}`,
+        artifactName
+    )
+}
+
+export function downloadSynthesisArtifact(projectName, artifactName) {
+    return downloadAuthenticatedFile(
+        `/projects/${encodeURIComponent(projectName)}/synthesis-artifacts/${encodeURIComponent(artifactName)}`,
+        artifactName
+    )
+}
+
+export function downloadPhysicalArtifact(projectName, artifactName) {
+    return downloadAuthenticatedFile(
+        `/projects/${encodeURIComponent(projectName)}/physical-artifacts/${encodeURIComponent(artifactName)}`,
+        artifactName
+    )
+}
+
 export async function createProject(projectData) {
-    const response = await fetch('/projects', {
+    const response = await apiFetch('/projects', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -137,7 +274,7 @@ export async function createProject(projectData) {
 }
 
 export async function addProjectFile(projectName, fileData) {
-    const response = await fetch(`/projects/${projectName}/files`, {
+    const response = await apiFetch(`/projects/${projectName}/files`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -156,7 +293,7 @@ export async function addProjectFile(projectName, fileData) {
 }
 
 export async function updateProjectFile(projectName, filename, content, type) {
-    const response = await fetch(
+    const response = await apiFetch(
         `/projects/${encodeURIComponent(projectName)}/files/${encodeURIComponent(filename)}`,
         {
             method: "PUT",

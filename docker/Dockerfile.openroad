@@ -1,0 +1,9 @@
+FROM openroad/flow-ubuntu22.04-builder:aeae7d
+
+ENV PATH="/OpenROAD-flow-scripts/tools/install/OpenROAD/bin:/usr/local/bin:${PATH}"
+
+WORKDIR /workspace
+
+RUN openroad -version && yosys -V
+
+ENTRYPOINT ["/bin/bash"]

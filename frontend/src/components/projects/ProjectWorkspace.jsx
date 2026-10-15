@@ -108,7 +108,7 @@ export default function ProjectWorkspace({
           setFilesStatus('error')
         }
       })
-
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsAddingFile(false)
     setFileSuccess('')
     setFileError('')

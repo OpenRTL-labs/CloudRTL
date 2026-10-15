@@ -1,30 +1,41 @@
 import { useEffect, useState } from 'react'
 import useProjectSession from '../../hooks/useProjectSession'
-import { runPhysicalDesign } from '../../services/projectApi'
+import {
+  getProjects,
+  runPhysicalDesign,
+  downloadPhysicalArtifact,
+} from '../../services/projectApi'
 
 export default function PhysicalDesignPage({
   session,
   setSession,
   onAddNewDesign,
-  projectSessions,
-  setProjectSessions,
 }) {
   const [projects, setProjects] = useState([])
-
+  const [projectsStatus, setProjectsStatus] = useState('loading')
+  const [downloadError, setDownloadError] = useState('')
   useEffect(() => {
-    fetch('/projects')
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Failed to load projects')
-        }
-        return response.json()
-      })
+    let isMounted = true
+
+    getProjects()
       .then((data) => {
-        setProjects(data.projects || [])
+        if (!isMounted) return
+
+        const loadedProjects = Array.isArray(data)
+          ? data
+          : data?.projects || []
+        setProjects(loadedProjects)
+        setProjectsStatus('loaded')
       })
       .catch((error) => {
+        if (!isMounted) return
         console.error('Failed to load projects:', error)
+        setProjectsStatus('error')
       })
+
+    return () => {
+      isMounted = false
+    }
   }, [])
 
   const {
@@ -36,7 +47,6 @@ export default function PhysicalDesignPage({
     setPhysicalMetrics,
     physicalArtifacts,
     setPhysicalArtifacts,
-    physicalArtifactsStatus,
     setPhysicalArtifactsStatus,
   } = useProjectSession(session, setSession)
 
@@ -51,7 +61,15 @@ export default function PhysicalDesignPage({
       artifacts: physicalArtifacts,
     },
   }
+  const handleDownloadArtifact = async (projectName, artifactName) => {
+    setDownloadError('')
 
+    try {
+      await downloadPhysicalArtifact(projectName, artifactName)
+    } catch (error) {
+      setDownloadError(error.message || 'Artifact download failed.')
+    }
+  }
   const handleRunPhysicalDesign = async (project) => {
     if (runStatus[project.name] === 'running') return
 
@@ -150,6 +168,24 @@ export default function PhysicalDesignPage({
         </div>
 
         <div className="mt-6 space-y-4">
+          {projectsStatus === 'loading' && (
+            <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-5 text-sm text-slate-400">
+              Loading projects...
+            </div>
+          )}
+
+          {projectsStatus === 'error' && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-5 text-sm text-red-400">
+              Unable to load projects from backend.
+            </div>
+          )}
+
+          {projectsStatus === 'loaded' && projects.length === 0 && (
+            <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-5 text-sm text-slate-400">
+              No projects found.
+            </div>
+          )}
+
           {projects.map((project) => {
             const status = runStatus[project.name]
             const result = results[project.name]
@@ -344,19 +380,22 @@ export default function PhysicalDesignPage({
                             </span>
                           </div>
 
-                          <a
-                            href={`/projects/${project.name}/physical-artifacts/${encodeURIComponent(
-                              artifact.name
-                            )}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            download={artifact.name}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDownloadArtifact(project.name, artifact.name)
+                            }
                             className="text-xs font-medium text-cyan-400 hover:text-cyan-300"
                           >
                             Download
-                          </a>
+                          </button>
                         </div>
                       ))}
+                      {downloadError && (
+                        <p className="mt-3 text-sm text-red-400">
+                          {downloadError}
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}
