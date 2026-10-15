@@ -1,112 +1,72 @@
-import { useState } from 'react'
-import WaveformDisplay from './WaveformDisplay'
+import { useEffect, useState } from 'react'
+import { createProjectSession } from '../../hooks/useProjectSession'
 import useProjectSession from '../../hooks/useProjectSession'
+import WaveformDisplay from './WaveformDisplay'
 import {
   runSimulation,
   getSimulationArtifacts,
   getWaveform,
   downloadSimulationArtifact,
+  getProjects,
 } from '../../services/projectApi'
 
-const fallbackProject = {
-  name: 'counter',
-  type: 'Verilog',
-  top_module: 'counter',
-}
+export default function SimulationPage({
+  projectSessions,
+  setProjectSessions,
+  onAddNewDesign,
+}) {
+  const [projects, setProjects] = useState([])
+  const [projectsStatus, setProjectsStatus] = useState('loading')
 
-export default function SimulationPage({ project, session, setSession, onAddNewDesign }) {
-  const currentProject = project || fallbackProject
-  const projects = [currentProject]
-  const [downloadError, setDownloadError] = useState('')
+  useEffect(() => {
+    let isMounted = true
 
-  const handleDownloadArtifact = async (projectName, artifactName) => {
-    setDownloadError('')
+    getProjects()
+      .then((data) => {
+        if (!isMounted) return
 
-    try {
-      await downloadSimulationArtifact(projectName, artifactName)
-    } catch (error) {
-      setDownloadError(error.message || 'Artifact download failed.')
+        const loadedProjects = Array.isArray(data)
+          ? data
+          : data?.projects || []
+
+        setProjects(loadedProjects)
+        setProjectsStatus('loaded')
+
+        setProjectSessions((previous) => {
+          const next = { ...previous }
+          let changed = false
+
+          loadedProjects.forEach((project) => {
+            if (!next[project.name]) {
+              next[project.name] = createProjectSession()
+              changed = true
+            }
+          })
+
+          return changed ? next : previous
+        })
+      })
+      .catch((error) => {
+        if (!isMounted) return
+        console.error('Failed to load projects:', error)
+        setProjectsStatus('error')
+      })
+
+    return () => {
+      isMounted = false
     }
-  }
-  const {
-    simStatus,
-    setSimStatus,
-    simOutput,
-    setSimOutput,
-    waveform,
-    setWaveform,
+  }, [setProjectSessions])
 
-    setWaveformStatus,
-    artifacts,
-    setArtifacts,
+  const getProjectSession = (projectName) => projectSessions[projectName]
 
-    setArtifactsStatus
-  } = useProjectSession(session, setSession)
-
-  const runStatus = {
-    [currentProject.name]: simStatus,
-  }
-
-  const results = {
-    [currentProject.name]: {
-      output: simOutput,
-      waveform,
-      artifacts,
-    },
-  }
-
-  const handleRunSimulation = async (project) => {
-    if (runStatus[project.name] === 'running') return
-
-    setSimStatus('running')
-    setSimOutput('')
-    setArtifacts([])
-    setArtifactsStatus('idle')
-    setWaveform(null)
-    setWaveformStatus('idle')
-
-    try {
-      const data = await runSimulation(project.name)
-      if (data.status !== 'success') {
-        throw new Error(data.output || 'Simulation failed.')
-      }
-
-      setSimOutput(data.output || 'Simulation completed successfully.')
-      setSimStatus('success')
-
-      try {
-        const artifactData = await getSimulationArtifacts(project.name)
-        setArtifacts(artifactData.artifacts || [])
-        setArtifactsStatus('loaded')
-      } catch {
-        setArtifacts([])
-        setArtifactsStatus('error')
-      }
-
-      try {
-        const waveformData = await getWaveform(project.name)
-        setWaveform(waveformData.waveform || null)
-        setWaveformStatus('loaded')
-        console.log('SimulationPage waveform:', waveformData.waveform)
-      } catch {
-        setWaveform(null)
-        setWaveformStatus('error')
-      }
-
-    } catch (error) {
-      setSimStatus('failed')
-      setSimOutput(error.message || 'Unable to run simulation.')
-    }
-  }
-
-  const getStatusLabel = (projectName) => {
-    const status = runStatus[projectName]
-
-    if (status === 'running') return 'Running'
-    if (status === 'success') return 'Completed'
-    if (status === 'failed') return 'Failed'
-
-    return 'Not Run'
+  const setProjectSession = (projectName, updater) => {
+    setProjectSessions((previous) => ({
+      ...previous,
+      [projectName]:
+        typeof updater === 'function'
+          ? updater(previous[projectName])
+          : updater,
+    }))
   }
 
   return (
@@ -149,134 +109,238 @@ export default function SimulationPage({ project, session, setSession, onAddNewD
         </div>
 
         <div className="mt-6 space-y-4">
-          {projects.map((project) => {
-            const status = runStatus[project.name]
-            const result = results[project.name]
+          {projectsStatus === 'loading' && (
+            <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-5 text-sm text-slate-400">
+              Loading projects...
+            </div>
+          )}
 
-            return (
-              <div
-                key={project.name}
-                className="rounded-lg border border-slate-800 bg-slate-950/70 p-5"
-              >
-                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <h3 className="font-mono text-base font-semibold text-white">
-                        {project.name}
-                      </h3>
+          {projectsStatus === 'error' && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-5 text-sm text-red-400">
+              Unable to load projects from backend.
+            </div>
+          )}
 
-                      <span className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-400">
-                        {project.type}
-                      </span>
-                    </div>
+          {projectsStatus === 'loaded' && projects.length === 0 && (
+            <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-5 text-sm text-slate-400">
+              No projects found.
+            </div>
+          )}
 
-                    <p className="mt-2 text-sm text-slate-400">
-                      Top Module:{' '}
-                      <span className="text-slate-300">
-                        {project.top_module}
-                      </span>
-                    </p>
+          {projectsStatus === 'loaded' &&
+            projects.map((project) => {
+              const session = getProjectSession(project.name)
+
+              if (!session) {
+                return (
+                  <div
+                    key={project.name}
+                    className="rounded-lg border border-slate-800 bg-slate-950/70 p-5 text-sm text-slate-400"
+                  >
+                    Preparing project session for {project.name}...
                   </div>
+                )
+              }
 
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`rounded-md border px-2.5 py-1 text-xs font-medium ${status === 'success'
-                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                        : status === 'failed'
-                          ? 'border-red-500/30 bg-red-500/10 text-red-400'
-                          : status === 'running'
-                            ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
-                            : 'border-slate-700 bg-slate-800 text-slate-400'
-                        }`}
-                    >
-                      {getStatusLabel(project.name)}
-                    </span>
-
-                    <button
-                      type="button"
-                      onClick={() => handleRunSimulation(project)}
-                      disabled={status === 'running'}
-                      className="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {status === 'running'
-                        ? 'Running...'
-                        : 'Run Simulation'}
-                    </button>
-                  </div>
-                </div>
-
-                {result?.output && (
-                  <div className="mt-5 border-t border-slate-800 pt-5">
-                    <h4 className="text-sm font-semibold text-slate-200">
-                      Simulation Output
-                    </h4>
-
-                    <pre className="mt-3 max-h-64 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs leading-relaxed text-slate-300">
-                      {result.output}
-                    </pre>
-                  </div>
-                )}
-
-                {result?.artifacts?.length > 0 && (
-                  <div className="mt-5 border-t border-slate-800 pt-5">
-                    <h4 className="text-sm font-semibold text-slate-200">
-                      Artifacts
-                    </h4>
-
-                    <div className="mt-3 space-y-2">
-                      {result.artifacts.map((artifact) => (
-                        <div
-                          key={artifact.name}
-                          className="flex items-center justify-between rounded-md border border-slate-800 bg-slate-900 px-3 py-2"
-                        >
-                          <span className="font-mono text-sm text-slate-300">
-                            {artifact.name}
-                          </span>
-
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleDownloadArtifact(project.name, artifact.name)
-                            }
-                            className="text-xs font-medium text-cyan-400 hover:text-cyan-300"
-                          >
-                            Download
-                          </button>
-
-                        </div>
-                      ))}
-                      {downloadError && (
-                        <p className="mt-3 text-sm text-red-400">
-                          {downloadError}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {result?.waveform && (
-                  <div className="mt-5 border-t border-slate-800 pt-5">
-                    <h4 className="text-sm font-semibold text-slate-200">
-                      Waveform
-                    </h4>
-
-                    <div className="mt-4">
-                      <WaveformDisplay waveform={result.waveform} />
-                    </div>
-                  </div>
-                )}
-
-                {result?.error && (
-                  <div className="mt-5 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
-                    {result.error}
-                  </div>
-                )}
-              </div>
-            )
-          })}
+              return (
+                <SimulationProjectCard
+                  key={project.name}
+                  project={project}
+                  session={session}
+                  setSession={(updater) =>
+                    setProjectSession(project.name, updater)
+                  }
+                />
+              )
+            })}
         </div>
       </div>
+    </div>
+  )
+}
+
+function SimulationProjectCard({ project, session, setSession }) {
+  const [downloadError, setDownloadError] = useState('')
+
+  const {
+    simStatus,
+    setSimStatus,
+    simOutput,
+    setSimOutput,
+    waveform,
+    setWaveform,
+    setWaveformStatus,
+    artifacts,
+    setArtifacts,
+    setArtifactsStatus,
+  } = useProjectSession(session, setSession)
+
+  const handleRunSimulation = async () => {
+    if (simStatus === 'running') return
+
+    setSimStatus('running')
+    setSimOutput('')
+    setArtifacts([])
+    setArtifactsStatus('idle')
+    setWaveform(null)
+    setWaveformStatus('idle')
+    setDownloadError('')
+
+    try {
+      const data = await runSimulation(project.name)
+
+      if (data.status !== 'success') {
+        throw new Error(data.output || 'Simulation failed.')
+      }
+
+      setSimOutput(data.output || 'Simulation completed successfully.')
+      setSimStatus('success')
+
+      try {
+        const artifactData = await getSimulationArtifacts(project.name)
+        setArtifacts(artifactData.artifacts || [])
+        setArtifactsStatus('loaded')
+      } catch (error) {
+        console.error(
+          `Failed to load simulation artifacts for ${project.name}:`,
+          error,
+        )
+        setArtifacts([])
+        setArtifactsStatus('error')
+      }
+
+      try {
+        const waveformData = await getWaveform(project.name)
+        setWaveform(waveformData.waveform || null)
+        setWaveformStatus('loaded')
+      } catch (error) {
+        console.error(
+          `Failed to load waveform for ${project.name}:`,
+          error,
+        )
+        setWaveform(null)
+        setWaveformStatus('error')
+      }
+    } catch (error) {
+      setSimStatus('failed')
+      setSimOutput(error.message || 'Unable to run simulation.')
+    }
+  }
+
+  const handleDownloadArtifact = async (artifactName) => {
+    setDownloadError('')
+
+    try {
+      await downloadSimulationArtifact(project.name, artifactName)
+    } catch (error) {
+      setDownloadError(error.message || 'Artifact download failed.')
+    }
+  }
+
+  const getStatusLabel = () => {
+    if (simStatus === 'running') return 'Running'
+    if (simStatus === 'success') return 'Completed'
+    if (simStatus === 'failed') return 'Failed'
+    return 'Not Run'
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-5">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="flex items-center gap-3">
+            <h3 className="font-mono text-base font-semibold text-white">
+              {project.name}
+            </h3>
+
+            <span className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-400">
+              {project.type}
+            </span>
+          </div>
+
+          <p className="mt-2 text-sm text-slate-400">
+            Top Module:{' '}
+            <span className="text-slate-300">{project.top_module}</span>
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <span
+            className={`rounded-md border px-2.5 py-1 text-xs font-medium ${simStatus === 'success'
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                : simStatus === 'failed'
+                  ? 'border-red-500/30 bg-red-500/10 text-red-400'
+                  : simStatus === 'running'
+                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                    : 'border-slate-700 bg-slate-800 text-slate-400'
+              }`}
+          >
+            {getStatusLabel()}
+          </span>
+
+          <button
+            type="button"
+            onClick={handleRunSimulation}
+            disabled={simStatus === 'running'}
+            className="rounded-md bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {simStatus === 'running' ? 'Running...' : 'Run Simulation'}
+          </button>
+        </div>
+      </div>
+
+      {simOutput && (
+        <div className="mt-5 border-t border-slate-800 pt-5">
+          <h4 className="text-sm font-semibold text-slate-200">
+            Simulation Output
+          </h4>
+
+          <pre className="mt-3 max-h-64 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs leading-relaxed text-slate-300">
+            {simOutput}
+          </pre>
+        </div>
+      )}
+
+      {artifacts?.length > 0 && (
+        <div className="mt-5 border-t border-slate-800 pt-5">
+          <h4 className="text-sm font-semibold text-slate-200">Artifacts</h4>
+
+          <div className="mt-3 space-y-2">
+            {artifacts.map((artifact) => (
+              <div
+                key={artifact.name}
+                className="flex items-center justify-between rounded-md border border-slate-800 bg-slate-900 px-3 py-2"
+              >
+                <span className="font-mono text-sm text-slate-300">
+                  {artifact.name}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => handleDownloadArtifact(artifact.name)}
+                  className="text-xs font-medium text-cyan-400 hover:text-cyan-300"
+                >
+                  Download
+                </button>
+              </div>
+            ))}
+
+            {downloadError && (
+              <p className="mt-3 text-sm text-red-400">{downloadError}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {waveform && (
+        <div className="mt-5 border-t border-slate-800 pt-5">
+          <h4 className="text-sm font-semibold text-slate-200">Waveform</h4>
+
+          <div className="mt-4">
+            <WaveformDisplay waveform={waveform} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

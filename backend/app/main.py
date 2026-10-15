@@ -1401,16 +1401,20 @@ def run_physical_design(
 ):
     matched_project = resolve_user_project(project_name, current_user, db)
     dirs = ensure_project_workspace(current_user.id, matched_project.id)
+    # Resolve the netlist from this project's workspace only.
+    netlist_path = dirs["artifacts"] / f"{matched_project.name}_netlist.v"
 
-    # Check synthesized netlist in project artifacts or simulator/work
-    netlist_path = dirs["artifacts"] / f"{project_name}_netlist.v"
     if not netlist_path.is_file():
-        netlist_path = (SIMULATOR_DIR / "work" / f"{project_name}_netlist.v").resolve()
+        netlist_path = dirs["work"] / f"{matched_project.name}_netlist.v"
 
     if not netlist_path.is_file():
         raise HTTPException(
             status_code=404,
-            detail="Synthesized netlist not found. Run synthesis first.",
+            detail=(
+                f"Synthesized netlist for '{matched_project.name}' "
+                "was not found in its project workspace. "
+                "Run synthesis first."
+            ),
         )
 
     

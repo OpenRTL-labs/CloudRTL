@@ -35,3 +35,6 @@ waveforms/
 physical/pdk/
 physical/work/
 simulator/work/
+
+# Per-user and per-project runtime workspaces
+simulator/workspace/
