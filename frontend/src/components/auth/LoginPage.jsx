@@ -1,11 +1,14 @@
 import { useState } from 'react'
-import { login } from '../../services/projectApi'
+import { login, register } from '../../services/projectApi'
 
 export default function LoginPage({ onLogin }) {
     const [username, setUsername] = useState('')
     const [password, setPassword] = useState('')
+    const [email, setEmail] = useState('')
     const [error, setError] = useState('')
+    const [success, setSuccess] = useState('')
     const [isSubmitting, setIsSubmitting] = useState(false)
+    const [isRegistering, setIsRegistering] = useState(false)
 
     const handleSubmit = async (event) => {
         event.preventDefault()
@@ -27,6 +30,56 @@ export default function LoginPage({ onLogin }) {
         } finally {
             setIsSubmitting(false)
         }
+    }
+
+    const handleRegister = async (event) => {
+        event.preventDefault()
+
+        setError('')
+        setSuccess('')
+
+        const normalizedUsername = username.trim()
+        const normalizedEmail = email.trim()
+
+        if (!normalizedUsername || !password) {
+            setError('Username and password are required.')
+            return
+        }
+        if (normalizedUsername.length < 3 || normalizedUsername.length > 100) {
+            setError('Username must be between 3 and 100 characters long.')
+            return
+        }
+        if (password.length < 6 || password.length > 255) {
+            setError('Password must be between 6 and 255 characters long.')
+            return
+        }
+        if (
+            normalizedEmail &&
+            (normalizedEmail.length > 255 ||
+                !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail))
+        ) {
+            setError('Enter a valid email address of no more than 255 characters.')
+            return
+        }
+
+        setIsSubmitting(true)
+
+        try {
+            await register(normalizedUsername, password, normalizedEmail)
+            setPassword('')
+            setIsRegistering(false)
+            setSuccess('Account created. You can now sign in.')
+        } catch (err) {
+            setError(err.message || 'Unable to create account.')
+        } finally {
+            setIsSubmitting(false)
+        }
+    }
+
+    const changeForm = (registering) => {
+        setIsRegistering(registering)
+        setError('')
+        setSuccess('')
     }
 
     return (
@@ -53,11 +106,13 @@ export default function LoginPage({ onLogin }) {
                         </div>
 
                         <h2 className="mt-8 text-2xl font-bold text-white">
-                            Sign in
+                            {isRegistering ? 'Create account' : 'Sign in'}
                         </h2>
 
                         <p className="mt-2 text-sm text-slate-400">
-                            Sign in to access your RTL and EDA projects.
+                            {isRegistering
+                                ? 'Create an account to access your RTL and EDA projects.'
+                                : 'Sign in to access your RTL and EDA projects.'}
                         </p>
                     </div>
 
@@ -67,7 +122,16 @@ export default function LoginPage({ onLogin }) {
                         </div>
                     )}
 
-                    <form onSubmit={handleSubmit} className="space-y-5">
+                    {success && (
+                        <div className="mb-5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-400">
+                            {success}
+                        </div>
+                    )}
+
+                    <form
+                        onSubmit={isRegistering ? handleRegister : handleSubmit}
+                        className="space-y-5"
+                    >
                         <div>
                             <label className="block text-sm font-medium text-slate-300">
                                 Username
@@ -85,6 +149,25 @@ export default function LoginPage({ onLogin }) {
                             />
                         </div>
 
+                        {isRegistering && (
+                            <div>
+                                <label className="block text-sm font-medium text-slate-300">
+                                    Email <span className="text-slate-500">(optional)</span>
+                                </label>
+
+                                <input
+                                    type="email"
+                                    value={email}
+                                    onChange={(event) =>
+                                        setEmail(event.target.value)
+                                    }
+                                    disabled={isSubmitting}
+                                    autoComplete="email"
+                                    className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500"
+                                />
+                            </div>
+                        )}
+
                         <div>
                             <label className="block text-sm font-medium text-slate-300">
                                 Password
@@ -97,7 +180,9 @@ export default function LoginPage({ onLogin }) {
                                     setPassword(event.target.value)
                                 }
                                 disabled={isSubmitting}
-                                autoComplete="current-password"
+                                autoComplete={
+                                    isRegistering ? 'new-password' : 'current-password'
+                                }
                                 className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500"
                             />
                         </div>
@@ -107,9 +192,27 @@ export default function LoginPage({ onLogin }) {
                             disabled={isSubmitting}
                             className="w-full rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                            {isSubmitting ? 'Signing in...' : 'Sign In'}
+                            {isSubmitting
+                                ? isRegistering
+                                    ? 'Creating account...'
+                                    : 'Signing in...'
+                                : isRegistering
+                                    ? 'Create account'
+                                    : 'Sign In'}
                         </button>
                     </form>
+
+                    <p className="mt-5 text-center text-sm text-slate-400">
+                        {isRegistering ? 'Already have an account?' : 'New to CloudRTL?'}{' '}
+                        <button
+                            type="button"
+                            onClick={() => changeForm(!isRegistering)}
+                            disabled={isSubmitting}
+                            className="font-medium text-cyan-400 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            {isRegistering ? 'Sign in' : 'Create account'}
+                        </button>
+                    </p>
                 </div>
             </div>
         </div>

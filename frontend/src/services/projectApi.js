@@ -59,6 +59,30 @@ export async function login(username, password) {
     return data
 }
 
+export async function register(username, password, email) {
+    const response = await apiFetch('/auth/register', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            username,
+            password,
+            email: email || null,
+        }),
+    })
+
+    const data = await response.json().catch(() => null)
+
+    if (!response.ok) {
+        throw new Error(
+            data?.detail || `Registration failed (${response.status})`
+        )
+    }
+
+    return data
+}
+
 export async function getCurrentUser() {
     const response = await apiFetch('/auth/me')
 

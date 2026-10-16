@@ -7,6 +7,8 @@ import urllib.error
 import urllib.request
 from sqlalchemy import text
 
+os.environ["CLOUDRTL_JWT_SECRET"] = "cloudrtl-test-only-" + os.urandom(32).hex()
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from app.database import engine, SessionLocal
 from app.models import User

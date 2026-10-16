@@ -691,7 +691,7 @@ def simulate_project(
                     status_code=400,
                     detail=f"RTL file '{f.name}' not found.",
                 )
-            rtl_args.append(f"workspace/{current_user.id}/{matched_project.id}/rtl/{f.name}")
+            rtl_args.append(f"rtl/{f.name}")
         elif f.type == "testbench":
             host_path = dirs["testbench"] / f.name
             if not host_path.is_file():
@@ -706,7 +706,7 @@ def simulate_project(
                     status_code=400,
                     detail=f"Testbench file '{f.name}' not found.",
                 )
-            tb_args.append(f"workspace/{current_user.id}/{matched_project.id}/testbench/{f.name}")
+            tb_args.append(f"testbench/{f.name}")
 
     if not rtl_args:
         raise HTTPException(
@@ -719,12 +719,17 @@ def simulate_project(
             detail=f"No testbench files found for project '{project_name}'",
         )
 
-    output_vvp = f"workspace/{current_user.id}/{matched_project.id}/work/{matched_project.name}.vvp"
+    output_vvp = f"work/{matched_project.name}.vvp"
+    docker_mounts = [
+        "-v", f"{dirs['base']}:/workspace",
+        "-v", f"{dirs['rtl']}:/workspace/rtl:ro",
+        "-v", f"{dirs['testbench']}:/workspace/testbench:ro",
+    ]
 
     # Step 1: iverilog compilation in Docker
     compile_cmd = [
         "docker", "run", "--rm",
-        "-v", f"{SIMULATOR_DIR}:/workspace",
+        *docker_mounts,
         "-w", "/workspace",
         "cloudrtl-eda:0.1",
         "iverilog",
@@ -767,8 +772,8 @@ def simulate_project(
     # Step 2: vvp execution in Docker with working dir set to project workspace
     sim_cmd = [
         "docker", "run", "--rm",
-        "-v", f"{SIMULATOR_DIR}:/workspace",
-        "-w", f"/workspace/workspace/{current_user.id}/{matched_project.id}",
+        *docker_mounts,
+        "-w", "/workspace",
         "cloudrtl-eda:0.1",
         "vvp",
         f"work/{matched_project.name}.vvp",
@@ -1570,8 +1575,6 @@ def get_physical_artifacts(
 
     for artifact_name in expected_artifacts:
         artifact_path = dirs["artifacts"] / artifact_name
-        if not artifact_path.is_file():
-            artifact_path = (PHYSICAL_DIR / "work" / artifact_name).resolve()
 
         if artifact_path.is_file():
             artifacts.append(
@@ -1628,8 +1631,6 @@ def get_physical_artifact(
         )
 
     target_path = dirs["artifacts"] / artifact_name
-    if not target_path.is_file():
-        target_path = (PHYSICAL_DIR / "work" / artifact_name).resolve()
 
     if not target_path.is_file():
         raise HTTPException(
@@ -1668,7 +1669,7 @@ def get_synthesis_artifacts(
     for artifact_name in expected_artifacts:
         artifact_path = dirs["artifacts"] / artifact_name
         if not artifact_path.is_file():
-            artifact_path = (SIMULATOR_DIR / "work" / artifact_name).resolve()
+            artifact_path = dirs["work"] / artifact_name
 
         if artifact_path.is_file():
             if artifact_name.endswith(".v"):
@@ -1729,7 +1730,7 @@ def get_synthesis_artifact(
 
     target_path = dirs["artifacts"] / artifact_name
     if not target_path.is_file():
-        target_path = (SIMULATOR_DIR / "work" / artifact_name).resolve()
+        target_path = dirs["work"] / artifact_name
 
     if not target_path.is_file():
         raise HTTPException(
@@ -1756,7 +1757,7 @@ def get_project_artifacts(
     artifacts: list[ArtifactItem] = []
     prefix = matched_project.name
 
-    search_dirs = [dirs["artifacts"], dirs["work"], dirs["base"], (SIMULATOR_DIR / "work").resolve()]
+    search_dirs = [dirs["artifacts"], dirs["work"], dirs["base"]]
 
     for s_dir in search_dirs:
         if s_dir.is_dir():
@@ -1841,9 +1842,6 @@ def get_project_artifact(
     if not target_path.is_file():
         target_path = dirs["work"] / artifact_name
 
-    # Keep the shared-work fallback only for project-named artifacts.
-    if not target_path.is_file() and is_project_named:
-        target_path = (SIMULATOR_DIR / "work" / artifact_name).resolve()
     if not target_path.is_file():
         raise HTTPException(status_code=404, detail="Artifact not found")
 

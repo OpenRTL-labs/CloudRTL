@@ -1,14 +1,19 @@
 import os
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 import jwt
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+os.environ["CLOUDRTL_JWT_SECRET"] = "cloudrtl-test-only-" + os.urandom(32).hex()
 
 # Ensure backend directory is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.database import SessionLocal, engine, test_database_connection
+from app.database import Base
 from app.models import User
 from app.auth import (
     RegisterRequest,
@@ -27,12 +32,18 @@ from app.auth import (
 )
 from fastapi.security import HTTPAuthorizationCredentials
 
+engine = create_engine(
+    "sqlite+pysqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+Base.metadata.create_all(bind=engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 def run_tests():
     print("=== STARTING AUTHENTICATION VERIFICATION TESTS ===")
 
-    # 1. DB Connection
-    test_database_connection()
-    print("[PASS] Database connection verified.")
+    print("[PASS] Isolated in-memory SQLite database configured.")
 
     # Clean up test users if existing
     db = SessionLocal()
@@ -54,6 +65,7 @@ def run_tests():
     # 3. JWT Creation and Verification
     token = create_access_token(user_id=999, username="testjwtuser")
     decoded = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    assert jwt.get_unverified_header(token)["alg"] == "HS256"
     assert decoded["sub"] == "999", f"Expected sub '999', got {decoded.get('sub')}"
     assert decoded["username"] == "testjwtuser"
     assert "exp" in decoded and "iat" in decoded
@@ -80,17 +92,17 @@ def run_tests():
         assert set(safe_dict.keys()) == {"id", "username", "email", "created_at"}
         print("[PASS] User registration endpoint returned safe response without password_hash.")
 
-        # 5. Verify Database Row in PostgreSQL
+        # 5. Verify Database Row in the isolated test database
         with engine.connect() as conn:
             row = conn.execute(
                 text("SELECT id, username, email, password_hash, created_at FROM users WHERE username = 'testuser1'")
             ).fetchone()
-            assert row is not None, "User row not found in PostgreSQL!"
+            assert row is not None, "User row not found in isolated SQLite database!"
             assert row.username == "testuser1"
             assert row.email == "testuser1@example.com"
             assert row.password_hash != "StrongPassword123!", "CRITICAL: plaintext password stored in database!"
             assert "$argon2id$" in row.password_hash, "password_hash is not Argon2 hash!"
-            print("[PASS] User verified in PostgreSQL database (stored as Argon2 hash, NEVER plaintext).")
+            print("[PASS] User verified in isolated database (stored as Argon2 hash, NEVER plaintext).")
 
         # 6. Verify Duplicate Username Rejection
         dup_user_req = RegisterRequest(
@@ -152,7 +164,66 @@ def run_tests():
         assert current_user.email == "testuser1@example.com"
         me_response = get_me(current_user)
         assert me_response.username == "testuser1"
-        print("[PASS] /auth/me dependency works and loads user from PostgreSQL.")
+        print("[PASS] /auth/me dependency works and loads user from isolated SQLite database.")
+
+        # JWT subject claims must identify an existing user by id.
+        token_expiry = int((datetime.now(timezone.utc) + timedelta(minutes=5)).timestamp())
+        invalid_subject_tokens = [
+            jwt.encode(
+                {"username": "testuser1", "exp": token_expiry},
+                JWT_SECRET,
+                algorithm=JWT_ALGORITHM,
+            ),
+            jwt.encode(
+                {"sub": "not-a-user-id", "username": "testuser1", "exp": token_expiry},
+                JWT_SECRET,
+                algorithm=JWT_ALGORITHM,
+            ),
+            jwt.encode(
+                {"sub": 123, "username": "testuser1", "exp": token_expiry},
+                JWT_SECRET,
+                algorithm=JWT_ALGORITHM,
+            ),
+            jwt.encode(
+                {"sub": "999999999", "username": "testuser1", "exp": token_expiry},
+                JWT_SECRET,
+                algorithm=JWT_ALGORITHM,
+            ),
+        ]
+        for invalid_subject_token in invalid_subject_tokens:
+            try:
+                invalid_subject_creds = HTTPAuthorizationCredentials(
+                    scheme="Bearer",
+                    credentials=invalid_subject_token,
+                )
+                get_current_user(invalid_subject_creds, db)
+                assert False, "Should reject missing, invalid, or unknown user subject!"
+            except HTTPException as exc:
+                assert exc.status_code == 401
+
+        oversized_subject_token = jwt.encode(
+            {
+                "sub": "2147483648",
+                "username": "testuser1",
+                "exp": token_expiry,
+            },
+            JWT_SECRET,
+            algorithm=JWT_ALGORITHM,
+        )
+        oversized_subject_db = Mock()
+        try:
+            oversized_subject_creds = HTTPAuthorizationCredentials(
+                scheme="Bearer",
+                credentials=oversized_subject_token,
+            )
+            get_current_user(oversized_subject_creds, oversized_subject_db)
+            assert False, "Should reject an out-of-range user ID subject!"
+        except HTTPException as exc:
+            assert exc.status_code == 401
+            assert exc.detail == "Invalid authentication token payload."
+            assert exc.headers == {"WWW-Authenticate": "Bearer"}
+        oversized_subject_db.get.assert_not_called()
+        print("[PASS] Out-of-range numeric JWT subject rejected before database lookup.")
 
         # 11. Verify /auth/me rejects missing or invalid tokens
         try:

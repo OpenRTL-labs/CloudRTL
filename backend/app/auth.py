@@ -21,10 +21,9 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 password_hash_helper = PasswordHash.recommended()
 
 # JWT configuration
-DEV_FALLBACK_JWT_SECRET = (
-    "dev-insecure-secret-key-cloudrtl-local-development-only-change-in-production"
-)
-JWT_SECRET = os.getenv("CLOUDRTL_JWT_SECRET", DEV_FALLBACK_JWT_SECRET)
+JWT_SECRET = os.getenv("CLOUDRTL_JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError("CLOUDRTL_JWT_SECRET must be set before the app starts.")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(
     os.getenv("CLOUDRTL_ACCESS_TOKEN_EXPIRE_MINUTES", "60")
@@ -117,6 +116,7 @@ def get_current_user(
             token,
             JWT_SECRET,
             algorithms=[JWT_ALGORITHM],
+            options={"require": ["exp", "sub"]},
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(
@@ -132,7 +132,7 @@ def get_current_user(
         )
 
     user_id_str = payload.get("sub")
-    if not user_id_str:
+    if not isinstance(user_id_str, str) or not user_id_str:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token payload.",
@@ -142,20 +142,20 @@ def get_current_user(
     try:
         user_id = int(user_id_str)
     except ValueError:
-        user_id = None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token payload.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    user = None
-    if user_id is not None:
-        user = db.get(User, user_id)
+    if not 1 <= user_id <= 2_147_483_647:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token payload.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    if user is None:
-        username = payload.get("username")
-        if username:
-            user = (
-                db.query(User)
-                .filter(func.lower(User.username) == username.lower())
-                .first()
-            )
+    user = db.get(User, user_id)
 
     if user is None:
         raise HTTPException(
